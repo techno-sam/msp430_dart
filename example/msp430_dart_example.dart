@@ -65,6 +65,11 @@ enum Tokens<T> {
     }
     return Token<T>(this, value);
   }
+
+  bool get isArg => name.startsWith("arg");
+
+  bool get isVal => this == value;
+  bool get isLblVal => this == labelVal;
 }
 
 class Token<T> {
@@ -88,6 +93,12 @@ class Token<T> {
     }
     return '$color${token.name}<$T>[$value]${Style.RESET_ALL}';
   }
+
+  bool get isArg => token.isArg;
+
+  bool get isVal => token.isVal;
+
+  bool get isLblVal => token.isLblVal;
 }
 
 
@@ -247,7 +258,10 @@ List<Token>? parseArgument(String txt) {
       String? reg = match.namedGroup("reg")?.toLowerCase();
       reg = namedRegisters[reg] ?? reg;
       if (lbl == null || reg == null) return null;
-      return [Tokens.argIdx(), Tokens.labelVal(lbl)];
+      reg = namedRegisters[reg] ?? reg;
+      int? regNum = int.tryParse(reg.substring(1));
+      if (regNum == null) return null;
+      return [Tokens.argIdx(), Tokens.labelVal(lbl), Tokens.value(regNum)];
     } else if (re.regAbsoluteLbl.hasMatch(txt)) { // absolute
       var match = re.regAbsoluteLbl.firstMatch(txt)!;
       String? lbl = match.namedGroup("label");
@@ -328,6 +342,52 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
     if (bw != "") {
       tentativeTokens.add(Tokens.modeInd(bw == "w"));
     }
+    if (["jmp", "jne", "jnz", "jeq", "jz", "jnc", "jlo", "jc", "jhs", "jn", "jge", "jl"].contains(mnemonic)) {
+      if (matches.length != 2) {
+        erroringLines.add(line.error("Jump instruction must have exactly one argument"));
+        continue;
+      }
+      var arg = matches[1];
+      if (re.jmpNumeric.hasMatch(arg)) {
+        var match = re.jmpNumeric.firstMatch(arg)!;
+        String sign = match.namedGroup("sign") ?? "+";
+        String? digits = match.namedGroup("digits")?.toLowerCase();
+        String? hex = match.namedGroup("hex")?.toLowerCase();
+        if (digits == null && hex == null) {
+          erroringLines.add(line.error("Invalid argument for jump instruction"));
+          continue;
+        }
+        int? val;
+        if (hex != null) {
+          val = int.tryParse(hex, radix: 16);
+        } else {
+          val = int.tryParse(digits!);
+        }
+        if (val == null) {
+          erroringLines.add(line.error("Invalid argument for jump instruction"));
+          continue;
+        }
+        if (sign == "-") {
+          val *= -1;
+        } else if (sign != "+") {
+          erroringLines.add(line.error("Invalid argument for jump instruction"));
+        }
+        tentativeTokens.add(Tokens.value(val));
+      } else if (re.label.hasMatch(arg)) {
+        var match = re.label.firstMatch(arg)!;
+        if (match.groupCount != 1) {
+          erroringLines.add(line.error("Failed to parse label for jump instruction (invalid characters?)"));
+          continue;
+        }
+        String label = match.group(1)!;
+        tentativeTokens.add(Tokens.labelVal(label));
+      } else {
+        erroringLines.add(line.error("Invalid argument for jump instruction"));
+        continue;
+      }
+      tokens.addAll(tentativeTokens);
+      continue;
+    }
     if (matches.length > 1) {
       List<Token>? arg1 = parseArgument(matches[1]);
       if (arg1 == null) {
@@ -364,7 +424,569 @@ void printErrors(List<Pair<Line, String>> erroringLines) {
 }
 
 
-void parse(String txt) { // fixme return something and strip comments first
+class TokenStream {
+  late final List<Token> _tokens;
+  TokenStream(List<Token> tokens) {
+    _tokens = tokens.toList();
+  }
+
+  Token peek() {
+    return _tokens[0];
+  }
+
+  Token peekAhead(int idx) {
+    return _tokens[idx];
+  }
+
+  Token pop() {
+    return _tokens.removeAt(0);
+  }
+
+  bool get isEmpty => _tokens.isEmpty;
+
+  bool get isNotEmpty => _tokens.isNotEmpty;
+
+  void popToNextLine() {
+    while (peek().token != Tokens.lineStart) {
+      pop();
+    }
+  }
+}
+
+class LabelOrValue {
+  String? label;
+  int? value;
+  bool get hasValue => value != null;
+
+  LabelOrValue.lbl(String this.label);
+
+  LabelOrValue.val(int this.value);
+
+  @override
+  String toString() => hasValue ? "$value" : "'$label'";
+}
+
+abstract class Operand {
+  bool get hasExtensionWord;
+  int? get extensionWord;
+
+  int get as;
+  int get src;
+
+  int get ad;
+  int get dst;
+
+  int? _pc = null;
+
+  set pc(int? pc) {
+    _pc = pc;
+  }
+}
+
+/* operand types
+argRegd         - register direct
+argIdx          - indexed (requires two 'value's (index and register)
+argRegi         - register indirect
+argRegia        - register indirect autoincrement
+argSym          - symbolic
+argImm          - immediate
+argAbs          - absolute
+ */
+
+
+class OperandRegisterDirect extends Operand {
+
+  final int _reg;
+  OperandRegisterDirect(this._reg) {
+    if (_reg < 0 || _reg > 15) {
+      throw ArgumentError("invalid register value $_reg");
+    }
+  }
+
+  @override
+  bool get hasExtensionWord => false;
+
+  @override
+  int? get extensionWord => null;
+
+  @override
+  int get as => 0;
+
+  @override
+  int get src => _reg;
+
+  @override
+  int get ad => 0;
+
+  @override
+  int get dst => _reg;
+
+  @override
+  String toString() => "RegDir r$_reg";
+}
+
+class OperandIndexed extends Operand {
+
+  final int _reg;
+  final LabelOrValue _val;
+
+  OperandIndexed(this._reg, this._val) {
+    if (_reg < 0 || _reg > 15) {
+      throw ArgumentError("invalid register value $_reg");
+    }
+  }
+
+  @override
+  bool get hasExtensionWord => true;
+
+  @override
+  int? get extensionWord => _val.value;
+
+  @override
+  int get as => 01;
+
+  @override
+  int get src => _reg;
+
+  @override
+  int get ad => 1;
+
+  @override
+  int get dst => _reg;
+
+  @override
+  String toString() => "RegIdx $_val(r$_reg)";
+}
+
+class OperandRegisterIndirect extends Operand {
+
+  final int _reg;
+  final bool _autoincrement;
+  OperandRegisterIndirect(this._reg, this._autoincrement) {
+    if (_reg < 0 || _reg > 15) {
+      throw ArgumentError("invalid register value $_reg");
+    }
+  }
+
+  @override
+  bool get hasExtensionWord => false;
+
+  @override
+  int? get extensionWord => null;
+
+  @override
+  int get as => _autoincrement ? 3 : 2; // 0b11 : 0b10
+
+  @override
+  int get src => _reg;
+
+  @override
+  int get ad => throw UnimplementedError();
+
+  @override
+  int get dst => throw UnimplementedError();
+
+  @override
+  String toString() => "RegInd @r$_reg${_autoincrement ? '+' : ''}";
+}
+
+class OperandSymbolic extends Operand {
+
+  final LabelOrValue _val;
+
+  OperandSymbolic(this._val);
+
+  @override
+  bool get hasExtensionWord => true;
+
+  @override
+  int? get extensionWord => _pc == null ? null : (_val.hasValue ? _val.value! - _pc! : null); // requires knowledge of Program Counter
+
+  @override
+  int get as => 01; // actually indexed mode. shhh! don't tell anyone!
+
+  @override
+  int get src => 0; // r0 (pc)
+
+  @override
+  int get ad => 1;
+
+  @override
+  int get dst => 0;
+
+  @override
+  String toString() => "Sym $_val";
+}
+
+class OperandImmediate extends Operand {
+
+  final LabelOrValue _val;
+
+  OperandImmediate(this._val);
+
+  @override
+  bool get hasExtensionWord => true;
+
+  @override
+  int? get extensionWord => _val.value;
+
+  @override
+  int get as => 3; // 0b11 actually register autoincrement
+
+  @override
+  int get src => 0; // r0 (pc)
+
+  @override
+  int get ad => throw UnimplementedError();
+
+  @override
+  int get dst => throw UnimplementedError();
+
+  @override
+  String toString() => "Imm #$_val";
+}
+
+class OperandAbsolute extends Operand {
+
+  final LabelOrValue _val;
+
+  OperandAbsolute(this._val);
+
+  @override
+  bool get hasExtensionWord => true;
+
+  @override
+  int? get extensionWord => _val.value;
+
+  @override
+  int get as => 01; // actually indexed mode
+
+  @override
+  int get src => 2; // r2 (sr) is specially decoded as '0' for indexed mode
+
+  @override
+  int get ad => 1;
+
+  @override
+  int get dst => 2;
+
+  @override
+  String toString() => "Abs &$_val";
+}
+
+
+
+class Instruction {
+  List<String> labels;
+  String mnemonic;
+  InstrInfo info;
+  Instruction(this.mnemonic, this.labels, this.info);
+}
+
+class JumpInstruction extends Instruction {
+  LabelOrValue target;
+
+  JumpInstruction(super.mnemonic, super.labels, super.info, this.target);
+
+  @override
+  String toString() => "$mnemonic->$target $labels";
+}
+
+class SingleOperandInstruction extends Instruction {
+  Operand op1;
+
+  SingleOperandInstruction(super.mnemonic, super.labels, super.info, this.op1);
+
+  @override
+  String toString() => "$mnemonic<$op1> $labels";
+}
+
+class DoubleOperandInstruction extends Instruction {
+  Operand op1;
+  Operand op2;
+
+  DoubleOperandInstruction(super.mnemonic, super.labels, super.info, this.op1, this.op2);
+
+  @override
+  String toString() => "$mnemonic<$op1, $op2> $labels";
+}
+
+class RetiInstruction extends Instruction {
+  RetiInstruction(List<String> labels, InstrInfo info) : super("reti", labels, info);
+
+  @override
+  String toString() => "RetiInstruction $labels";
+}
+
+
+class InstrInfo {
+  final String opCode;
+  final int argCount; // 0 is just for regi, 1 is single-operand arithmetic, 2 is two-operand arithmetic, -1 is jump
+  final bool supportBW;
+  const InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
+}
+
+Map<String, InstrInfo> instructionInfo = {
+  "rrc": InstrInfo(1, "000", true),
+  "swpb": InstrInfo(1, "001", false),
+  "rra": InstrInfo(1, "010", true),
+  "sxt": InstrInfo(1, "011", false),
+  "push": InstrInfo(1, "100", true),
+  "call": InstrInfo(1, "101", false),
+  "reti": InstrInfo(0, "110", false),
+
+
+  "jne": InstrInfo(-1, "000", false), // jnz
+  "jnz": InstrInfo(-1, "000", false), // jnz
+
+  "jeq": InstrInfo(-1, "001", false), // jz
+  "jz": InstrInfo(-1, "001", false),  // jz
+
+  "jnc": InstrInfo(-1, "010", false), // jlo
+  "jlo": InstrInfo(-1, "010", false), // jlo
+
+  "jc": InstrInfo(-1, "011", false),  // jhs
+  "jhs": InstrInfo(-1, "011", false), // jhs
+
+  "jn": InstrInfo(-1, "100", false),
+  "jge": InstrInfo(-1, "101", false),
+  "jl": InstrInfo(-1, "110", false),
+  "jmp": InstrInfo(-1, "111", false),
+
+
+  "mov": InstrInfo(2, "0100", true),
+  "add": InstrInfo(2, "0101", true),
+  "addc": InstrInfo(2, "0110", true),
+  "subc": InstrInfo(2, "0111", true),
+  "sub": InstrInfo(2, "1000", true),
+  "cmp": InstrInfo(2, "1001", true),
+  "dadd": InstrInfo(2, "1010", true),
+  "bit": InstrInfo(2, "1011", true),
+  "bic": InstrInfo(2, "1100", true),
+  "bis": InstrInfo(2, "1101", true),
+  "xor": InstrInfo(2, "1110", true),
+  "and": InstrInfo(2, "1111", true),
+};
+
+
+Operand? parseOperandFromStream(Token next, TokenStream t, Function(String, Token) fail) {
+  switch (next.token) {
+    case Tokens.argRegd: // stream looks like [next] [val]
+      Token nextV = t.peek();
+      if (!nextV.isVal) {
+        fail("value", nextV);
+        return null;
+      }
+      t.pop();
+      return OperandRegisterDirect(nextV.value);
+    case Tokens.argIdx: //[Tokens.argIdx(), Tokens.value(idx), Tokens.value(regNum)]; or [Tokens.argIdx(), Tokens.labelVal(lbl), Tokens.value(regNum)];
+      Token nextV = t.peek();
+      LabelOrValue lv;
+      if (nextV.isVal) {
+        lv = LabelOrValue.val(nextV.value);
+      } else if (nextV.isLblVal) {
+        lv = LabelOrValue.lbl(nextV.value);
+      } else {
+        fail("value or labelVal", nextV);
+        return null;
+      }
+      t.pop(); // pop nextV
+      Token nextReg = t.peek();
+      if (!nextReg.isVal) {
+        fail("value", nextReg);
+        return null;
+      }
+      t.pop();
+      return OperandIndexed(nextReg.value, lv);
+    case Tokens.argRegi: case Tokens.argRegia: // [next] [val]
+    Token nextV = t.peek();
+    if (!nextV.isVal) {
+      fail("value", nextV);
+      return null;
+    }
+    t.pop();
+    return OperandRegisterIndirect(nextV.value, next.token == Tokens.argRegia);
+    case Tokens.argSym: // [next] [val/lblVal]
+      Token nextV = t.peek();
+      LabelOrValue lv;
+      if (nextV.isVal) {
+        lv = LabelOrValue.val(nextV.value);
+      } else if (nextV.isLblVal) {
+        lv = LabelOrValue.lbl(nextV.value);
+      } else {
+        fail("value or labelVal", nextV);
+        return null;
+      }
+      t.pop();
+      return OperandSymbolic(lv);
+    case Tokens.argImm: // [next] [val/lblVal]
+      Token nextV = t.peek();
+      LabelOrValue lv;
+      if (nextV.isVal) {
+        lv = LabelOrValue.val(nextV.value);
+      } else if (nextV.isLblVal) {
+        lv = LabelOrValue.lbl(nextV.value);
+      } else {
+        fail("value or labelVal", nextV);
+        return null;
+      }
+      t.pop();
+      return OperandImmediate(lv);
+    case Tokens.argAbs: // [next] [val/lblVal]
+      Token nextV = t.peek();
+      LabelOrValue lv;
+      if (nextV.isVal) {
+        lv = LabelOrValue.val(nextV.value);
+      } else if (nextV.isLblVal) {
+        lv = LabelOrValue.lbl(nextV.value);
+      } else {
+        fail("value or labelVal", nextV);
+        return null;
+      }
+      t.pop();
+      return OperandAbsolute(lv);
+    default:
+      throw AssertionError("Unreachable clause reached somehow.");
+  }
+}
+
+
+// This should be implemented somewhat like a state machine (described in parse_fsm.xcf)
+List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> erroringLines) {
+  TokenStream t = TokenStream(tokens);
+  int line = 0;
+  List<Instruction> instructions = [];
+  List<String> labels = [];
+  while (t.isNotEmpty) {
+    Token token = t.pop();
+    if (token.token == Tokens.lineStart) {
+      line = token.value;
+    } else if (token.token == Tokens.label) {
+      labels.add(token.value);
+    } else if (token.token == Tokens.mnemonic) {
+      // parsing hell
+      String mnemonic = token.value;
+      InstrInfo? info = instructionInfo[mnemonic];
+      if (info == null) {
+        erroringLines.add(Pair(line, "Unknown mnemonic $mnemonic"));
+        labels = [];
+        t.popToNextLine();
+        continue;
+      }
+      // check for number of arguments etc - special case for jump
+      if (info.argCount == -1) { // jump
+        Token next = t.peek();
+        if (next.token == Tokens.value) {
+          t.pop();
+          instructions.add(JumpInstruction(mnemonic, labels, info, LabelOrValue.val(next.value)));
+          labels = [];
+          continue;
+        } else if (next.token == Tokens.labelVal) {
+          t.pop();
+          instructions.add(JumpInstruction(mnemonic, labels, info, LabelOrValue.lbl(next.value)));
+          labels = [];
+          continue;
+        } else {
+          erroringLines.add(Pair(line, "Jump instruction expected a value or labelVal token, got $next"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+      } else if (info.argCount == 0) {
+        instructions.add(RetiInstruction(labels, info));
+        labels = [];
+        continue;
+      } else if (info.argCount == 1) {
+        Token next = t.peek();
+        if (next.isArg) {
+          t.pop();
+          void fail(String expected, Token got) {
+            erroringLines.add(Pair(line, "Invalid token during arg parsing, expected $expected, got $got"));
+            labels = [];
+            t.popToNextLine();
+          }
+          Operand? op1 = parseOperandFromStream(next, t, fail);
+          if (op1 != null) {
+            instructions.add(SingleOperandInstruction(mnemonic, labels, info, op1));
+            labels = [];
+          }
+          continue;
+        } else {
+          erroringLines.add(Pair(line, "Single arg instruction expected an argument, got $next"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+      } else if (info.argCount == 2) {
+        Operand op1;
+        Operand op2;
+
+        Token next = t.peek();
+        if (next.isArg) {
+          t.pop();
+          void fail(String expected, Token got) {
+            erroringLines.add(Pair(line, "Invalid token during arg parsing, expected $expected, got $got"));
+            labels = [];
+            t.popToNextLine();
+          }
+          Operand? op = parseOperandFromStream(next, t, fail);
+          if (op != null) {
+            op1 = op;
+          } else {
+            continue;
+          }
+        } else {
+          erroringLines.add(Pair(line, "Double arg instruction expected a first argument, got $next"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+
+        next = t.peek();
+        if (next.isArg) {
+          t.pop();
+          void fail(String expected, Token got) {
+            erroringLines.add(Pair(line, "Invalid token during arg parsing, expected $expected, got $got"));
+            labels = [];
+            t.popToNextLine();
+          }
+          Operand? op = parseOperandFromStream(next, t, fail);
+          if (op != null) {
+            op2 = op;
+          } else {
+            continue;
+          }
+        } else {
+          erroringLines.add(Pair(line, "Double arg instruction expected a second argument, got $next"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+        instructions.add(DoubleOperandInstruction(mnemonic, labels, info, op1, op2));
+        labels = [];
+        continue;
+      } else {
+        throw AssertionError("Invalid number of arguments");
+      }
+    } else {
+      erroringLines.add(Pair(line, "Unexpected token $token"));
+      labels = [];
+      t.popToNextLine();
+    }
+  }
+  return instructions;
+}
+
+
+void printInstructions(List<Instruction> instructions) {
+  print("Instructions:");
+  for (Instruction instruction in instructions) {
+    print("  $instruction");
+  }
+}
+
+
+void parse(String txt) {
   List<Line> lines = parseLines(txt);
 
   List<Pair<Line, String>> erroringLines = [];
@@ -375,6 +997,11 @@ void parse(String txt) { // fixme return something and strip comments first
 
   printErrors(erroringLines);
   printTokens(tokens);
+
+  List<Pair<int, String>> errors = [];
+  List<Instruction> instructions = parseInstructions(tokens, errors);
+  print(errors);
+  printInstructions(instructions);
 }
 
 
@@ -385,13 +1012,17 @@ void main() {
   print("this should still be red");
   print("and this${Fore.RESET}. but not ${Back.LIGHTBLUE_EX}this${Style.RESET_ALL}");
   print("\n\n");
-  /*
+  //*
   parse("""test:
 ; this is a comment
-add R12 R1; so is this
-add @r14+
+test2: add R12 R1; so is this
+add @r14+ r4
+jmp test2
+jmp 0x12
+jmp 15
+jmp -0x53
 """);// */
-  parse(r"""
+  /*parse(r"""
 MOV #0x4400, SP
 .define "R6", Test$Macro_1
 AdD #10 [Test$Macro_1] ;comment
@@ -587,5 +1218,5 @@ mov     0x4(sp), r15
 add     #0x6, sp
 ret
 
-""");
+""");*/
 }

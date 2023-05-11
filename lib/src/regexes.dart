@@ -16,4 +16,7 @@ class Regex {
   RegExp regIdxLbl = RegExp(r"^(?<label>[A-z$_][A-z0-9$_]*)[(](?<reg>pc|sp|sr|cg|(?:r[0-9])|(?:r1[0-5]))[)]$", caseSensitive: false);
   RegExp regAbsoluteLbl = RegExp(r"^&(?<label>[A-z$_][A-z0-9$_]*)$", caseSensitive: false);
   RegExp regImmediateLbl = RegExp(r"^#(?<label>[A-z$_][A-z0-9$_]*)$", caseSensitive: false);
+
+  // jump instructions
+  RegExp jmpNumeric = RegExp(r"^(?<sign>[-+])?(?:(?:0x(?<hex>[0-9a-fA-F]{1,4}))|(?<digits>\d+))$");
 }
