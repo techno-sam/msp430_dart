@@ -1,4 +1,14 @@
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+
 import 'package:msp430_dart/msp430_dart.dart';
+
+
+extension on bool {
+  int get num => this ? 1 : 0;
+}
+
 
 /*
 Assembly steps:
@@ -13,7 +23,7 @@ needed tokens:
 lineStart       - start of a line
 label           - what it says on the tin
 mnemonic        - instruction (mnemonic)
-modeInd         - byte/word indicator (true = word, false = byte)
+modeInd         - byte/word indicator (false = word, true = byte)
 value           - numeric value for an argument
 labelVal        - label value for an argument
 
@@ -340,7 +350,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
     }
     tentativeTokens.add(Tokens.mnemonic(mnemonic));
     if (bw != "") {
-      tentativeTokens.add(Tokens.modeInd(bw == "w"));
+      tentativeTokens.add(Tokens.modeInd(bw == "b"));
     }
     if (["jmp", "jne", "jnz", "jeq", "jz", "jnc", "jlo", "jc", "jhs", "jn", "jge", "jl"].contains(mnemonic)) {
       if (matches.length != 2) {
@@ -416,10 +426,17 @@ void printTokens(List<Token> tokens) {
   }
 }
 
-void printErrors(List<Pair<Line, String>> erroringLines) {
-  print("${Fore.RED}Errors:${Style.RESET_ALL}");
+void printTokenizerErrors(List<Pair<Line, String>> erroringLines) {
+  print("${Fore.RED}Tokenizer Errors:${Style.RESET_ALL}");
   for (Pair<Line, String> erroringLine in erroringLines) {
     print("${Back.RED}  [${erroringLine.first.num}] (${erroringLine.first.contents}): ${erroringLine.second}${Style.RESET_ALL}");
+  }
+}
+
+void printInstructionParserErrors(List<Pair<int, String>> erroringLines) {
+  print("${Fore.RED}Instruction Parser Errors:${Style.RESET_ALL}");
+  for (Pair<int, String> erroringLine in erroringLines) {
+    print("${Back.RED}  [${erroringLine.first}]: ${erroringLine.second}${Style.RESET_ALL}");
   }
 }
 
@@ -464,6 +481,10 @@ class LabelOrValue {
 
   @override
   String toString() => hasValue ? "$value" : "'$label'";
+
+  int get(Map<String, int> labelAddresses) {
+    return value != null ? value! : labelAddresses[label!]!;
+  }
 }
 
 abstract class Operand {
@@ -476,10 +497,15 @@ abstract class Operand {
   int get ad;
   int get dst;
 
-  int? _pc = null;
+  int? _pc;
+  Map<String, int>? _labelAddressMap;
 
   set pc(int? pc) {
     _pc = pc;
+  }
+
+  set labelAddressMap(Map<String, int>? labelAddressMap) {
+    _labelAddressMap = labelAddressMap;
   }
 }
 
@@ -540,7 +566,7 @@ class OperandIndexed extends Operand {
   bool get hasExtensionWord => true;
 
   @override
-  int? get extensionWord => _val.value;
+  int? get extensionWord => _val.get(_labelAddressMap!);
 
   @override
   int get as => 01;
@@ -600,7 +626,7 @@ class OperandSymbolic extends Operand {
   bool get hasExtensionWord => true;
 
   @override
-  int? get extensionWord => _pc == null ? null : (_val.hasValue ? _val.value! - _pc! : null); // requires knowledge of Program Counter
+  int? get extensionWord => _pc == null ? null : (_val.get(_labelAddressMap!) - _pc!); // requires knowledge of Program Counter
 
   @override
   int get as => 01; // actually indexed mode. shhh! don't tell anyone!
@@ -618,23 +644,36 @@ class OperandSymbolic extends Operand {
   String toString() => "Sym $_val";
 }
 
+
+Map<int, Pair<int, int>> specialImmediates = { // value: <as, reg>
+  4: Pair(2, 2), // 0b10, 2(sr)
+  8: Pair(3, 2), // 0b11, 2(sr)
+  0: Pair(0, 3), // 0b00, 3(cg)
+  1: Pair(1, 3), // 0b01, 3(cg) (there is no index word)
+  2: Pair(2, 3), // 0b10, 3(cg)
+  -1: Pair(3, 3) // 0b11, 3(cg)
+};
+
+
 class OperandImmediate extends Operand {
 
   final LabelOrValue _val;
 
   OperandImmediate(this._val);
+  
+  bool get _extensionWordSkippable => _val.hasValue && specialImmediates.containsKey(_val.value);
 
   @override
-  bool get hasExtensionWord => true;
+  bool get hasExtensionWord => !_extensionWordSkippable;
 
   @override
-  int? get extensionWord => _val.value;
+  int? get extensionWord => _extensionWordSkippable ? null : _val.get(_labelAddressMap!);
 
   @override
-  int get as => 3; // 0b11 actually register autoincrement
+  int get as => _extensionWordSkippable ? specialImmediates[_val.value]!.first : 3; // 0b11 actually register autoincrement
 
   @override
-  int get src => 0; // r0 (pc)
+  int get src => _extensionWordSkippable ? specialImmediates[_val.value]!.second : 0; // r0 (pc)
 
   @override
   int get ad => throw UnimplementedError();
@@ -656,7 +695,7 @@ class OperandAbsolute extends Operand {
   bool get hasExtensionWord => true;
 
   @override
-  int? get extensionWord => _val.value;
+  int? get extensionWord => _val.get(_labelAddressMap!);
 
   @override
   int get as => 01; // actually indexed mode
@@ -676,46 +715,126 @@ class OperandAbsolute extends Operand {
 
 
 
-class Instruction {
+abstract class Instruction {
+  int lineNo;
   List<String> labels;
   String mnemonic;
   InstrInfo info;
-  Instruction(this.mnemonic, this.labels, this.info);
+  Instruction(this.lineNo, this.mnemonic, this.labels, this.info);
+  int get numWords;
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc);
 }
 
 class JumpInstruction extends Instruction {
   LabelOrValue target;
 
-  JumpInstruction(super.mnemonic, super.labels, super.info, this.target);
+  JumpInstruction(super.lineNo, super.mnemonic, super.labels, super.info, this.target);
 
   @override
   String toString() => "$mnemonic->$target $labels";
+
+  @override
+  int get numWords => 1;
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    // 10 bit signed offset (2s complement)
+    num offset = target.get(labelAddresses);
+    if (!target.hasValue) {
+      offset -= pc;
+    }
+    offset -= 2;
+    offset /= 2;
+    if (offset % 1 != 0) {
+      throw "Invalid jump offset: must be even";
+    }
+    int offsetInt = offset.floor();
+    if (offset > 512 || offset < -511) {
+      throw "Invalid jump offset: must be between -511 and 512 words";
+    }
+    if (offsetInt < 0) {
+      offsetInt += 1024;
+    }
+    int out = 0x2000; // 0b0010_0000_0000_0000
+    int opcode = int.parse(info.opCode, radix: 2);
+    out |= (opcode << 10);
+    out |= offsetInt;
+    return [out];
+  }
+
+
 }
 
 class SingleOperandInstruction extends Instruction {
   Operand op1;
+  bool bw;
 
-  SingleOperandInstruction(super.mnemonic, super.labels, super.info, this.op1);
+  SingleOperandInstruction(super.lineNo, super.mnemonic, super.labels, super.info, this.op1, this.bw);
 
   @override
-  String toString() => "$mnemonic<$op1> $labels";
+  String toString() => "$mnemonic<$op1>${info.supportBW ? (bw ? '.b' : '.w') : ''} $labels";
+
+  @override
+  int get numWords => 1 + op1.hasExtensionWord.num;
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    int out = 0x1000; // 0b0001_0000_0000_0000
+    int opcode = int.parse(info.opCode, radix: 2);
+    op1.pc = pc; // fixme operators need access to label map
+    op1.labelAddressMap = labelAddresses;
+    out |= opcode << 7;
+    out |= bw.num << 6;
+    out |= op1.as << 4;
+    out |= op1.src;
+    return [out, if (op1.hasExtensionWord) op1.extensionWord!];
+  }
 }
 
 class DoubleOperandInstruction extends Instruction {
-  Operand op1;
-  Operand op2;
+  Operand src;
+  Operand dst;
+  bool bw;
 
-  DoubleOperandInstruction(super.mnemonic, super.labels, super.info, this.op1, this.op2);
+  DoubleOperandInstruction(super.lineNo, super.mnemonic, super.labels, super.info, this.src, this.dst, this.bw);
 
   @override
-  String toString() => "$mnemonic<$op1, $op2> $labels";
+  String toString() => "$mnemonic<$src, $dst>${info.supportBW ? (bw ? '.b' : '.w') : ''} $labels";
+
+  @override
+  int get numWords => 1 + src.hasExtensionWord.num + dst.hasExtensionWord.num;
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    int out = int.parse(info.opCode, radix: 2) << 12;
+    src.pc = pc; // fixme operators need access to label map
+    dst.pc = pc;
+    src.labelAddressMap = labelAddresses;
+    dst.labelAddressMap = labelAddresses;
+    out |= src.src << 8;
+    out |= dst.ad << 7;
+    out |= bw.num << 6;
+    out |= src.as << 4;
+    out |= dst.dst;
+    return [out,
+      if (src.hasExtensionWord) src.extensionWord!,
+      if (dst.hasExtensionWord) dst.extensionWord!];
+  }
 }
 
 class RetiInstruction extends Instruction {
-  RetiInstruction(List<String> labels, InstrInfo info) : super("reti", labels, info);
+  RetiInstruction(int lineNo, List<String> labels, InstrInfo info) : super(lineNo, "reti", labels, info);
 
   @override
   String toString() => "RetiInstruction $labels";
+
+  @override
+  int get numWords => 1;
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    return [0x1300]; // 0b0001001100000000
+  }
 }
 
 
@@ -725,6 +844,46 @@ class InstrInfo {
   final bool supportBW;
   const InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
 }
+
+class EmulatedInstrInfo extends InstrInfo {
+  late final bool hasBW;
+  late final String source;
+  late final String dest;
+  EmulatedInstrInfo(String data) : super(data.contains("dst") ? 1 : 0, 'unparsed emulated instruction') { // data looks like this: "ADC.x dst	ADDC.x #0,dst"
+    List<String> split = data.split("\t");
+    source = split[0];
+    dest = split[1];
+
+    hasBW = source.contains(".x");
+  }
+}
+
+final String emulatedInstructions = """
+ADC.x dst	ADDC.x #0,dst
+BR dst	MOV dst,PC
+CLR.x dst	MOV.x #0,dst
+CLRC	BIC #1,SR
+CLRN	BIC #4,SR
+CLRZ	BIC #2,SR
+DADC.x dst	DADD.x #0,dst
+DEC.x dst	SUB.x #1,dst
+DECD.x dst	SUB.x #2,dst
+DINT	BIC #8,SR
+EINT	BIS #8,SR
+INC.x dst	ADD.x #1,dst
+INCD.x dst	ADD.x #2,dst
+INV.x dst	XOR.x #−1,dst
+NOP	MOV #0,R3
+POP dst	MOV @SP+,dst
+RET	MOV @SP+,PC
+RLA.x dst	ADD.x dst,dst
+RLC.x dst	ADDC.x dst,dst
+SBC.x dst	SUBC.x #0,dst
+SETC	BIS #1,SR
+SETN	BIS #4,SR
+SETZ	BIS #2,SR
+TST.x dst	CMP.x #0,dst
+""";
 
 Map<String, InstrInfo> instructionInfo = {
   "rrc": InstrInfo(1, "000", true),
@@ -769,8 +928,25 @@ Map<String, InstrInfo> instructionInfo = {
 };
 
 
-Operand? parseOperandFromStream(Token next, TokenStream t, Function(String, Token) fail) {
-  switch (next.token) {
+bool _emulatedInitialized = false;
+
+void _initEmulated() {
+  if (_emulatedInitialized) {
+    return;
+  }
+  _emulatedInitialized = true;
+  for (String emulated in emulatedInstructions.split("\n")) {
+    if (emulated == "") {
+      continue;
+    }
+    String mnemonic = emulated.split("\t")[0].replaceAll(" dst", "").replaceAll(".x", "").toLowerCase();
+    instructionInfo[mnemonic] = EmulatedInstrInfo(emulated);
+  }
+}
+
+
+Operand? parseOperandFromStream(Token nextArg, TokenStream t, Function(String, Token) fail) {
+  switch (nextArg.token) {
     case Tokens.argRegd: // stream looks like [next] [val]
       Token nextV = t.peek();
       if (!nextV.isVal) {
@@ -805,7 +981,7 @@ Operand? parseOperandFromStream(Token next, TokenStream t, Function(String, Toke
       return null;
     }
     t.pop();
-    return OperandRegisterIndirect(nextV.value, next.token == Tokens.argRegia);
+    return OperandRegisterIndirect(nextV.value, nextArg.token == Tokens.argRegia);
     case Tokens.argSym: // [next] [val/lblVal]
       Token nextV = t.peek();
       LabelOrValue lv;
@@ -873,17 +1049,121 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
         t.popToNextLine();
         continue;
       }
+      if (info is EmulatedInstrInfo) {
+        Token next = t.peek();
+        bool bw = false;
+        if (next.token == Tokens.modeInd) {
+          if (!info.hasBW) {
+            erroringLines.add(Pair(line, "Emulated mnemonic $mnemonic doesn't take a byte/word indicator"));
+            labels = [];
+            t.popToNextLine();
+            continue;
+          }
+          bw = next.value;
+          t.pop(); // pop mode indicator
+          next = t.peek();
+        }
+        if (next.token.isArg) {
+          t.pop(); // pop argument
+          if (info.argCount != 1) {
+            erroringLines.add(Pair(line, "Emulated mnemonic $mnemonic doesn't accept any arguments"));
+            labels = [];
+            t.popToNextLine();
+            continue;
+          }
+
+          void fail(String expected, Token got) {
+            erroringLines.add(Pair(line, "Invalid token during emulated mnemonic arg parsing, expected $expected, got $got"));
+            labels = [];
+            t.popToNextLine();
+          }
+
+          String targetMnemonic = info.dest.split(" ")[0].replaceAll(".x", "").toLowerCase();
+          Couple<String> args = info.dest.split(" ")[1].split(",").toCouple();
+
+          Operand? operand = parseOperandFromStream(next, t, fail);
+
+          Operand? op1;
+          Operand? op2;
+          if (args.first == "dst") {
+            op1 = operand;
+          } else {
+            var parsed = parseArgument(args.first);
+            if (parsed == null) {
+              erroringLines.add(Pair(line, "Failed to parse one or more operand tokens in emulated"));
+              labels = [];
+              t.popToNextLine();
+              continue;
+            }
+            TokenStream argTokens = TokenStream(parsed);
+            op1 = parseOperandFromStream(argTokens.pop(), argTokens, fail);
+          }
+          if (args.second == "dst") {
+            op2 = operand;
+          } else {
+            var parsed = parseArgument(args.second);
+            if (parsed == null) {
+              erroringLines.add(Pair(line, "Failed to parse one or more operand tokens in emulated"));
+              labels = [];
+              t.popToNextLine();
+              continue;
+            }
+            TokenStream argTokens = TokenStream(parsed);
+            op2 = parseOperandFromStream(argTokens.pop(), argTokens, fail);
+          }
+          if (op1 == null || op2 == null) {
+            erroringLines.add(Pair(line, "Emulated mnemonic $mnemonic failed to parse target operands"));
+            labels = [];
+            t.popToNextLine();
+            continue;
+          }
+          instructions.add(DoubleOperandInstruction(line, targetMnemonic, labels, instructionInfo[targetMnemonic]!, op1, op2, bw));
+          labels = [];
+          continue;
+        } else if (info.argCount == 1) {
+          erroringLines.add(Pair(line, "Emulated mnemonic $mnemonic expects an argument"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+        // we now have enough to build an instruction without args
+        String targetMnemonic = info.dest.split(" ")[0].replaceAll(".x", "").toLowerCase();
+        Couple<String> args = info.dest.split(" ")[1].split(",").toCouple();
+        Couple<TokenStream> argTokens = args.map((String arg) => TokenStream(parseArgument(arg) ?? []));
+        if (argTokens.either((op) => op.isEmpty)) {
+          erroringLines.add(Pair(line, "Failed to parse one or more operand tokens in emulated"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+        void fail(String expected, Token got) {
+          erroringLines.add(Pair(line, "Invalid token during emulated mnemonic arg parsing, expected $expected, got $got"));
+          labels = [];
+          t.popToNextLine();
+        }
+        Couple<Operand?> operands = argTokens.map((TokenStream stream) => parseOperandFromStream(stream.pop(), stream, fail));
+        if (operands.either((op) => op == null)) {
+          erroringLines.add(Pair(line, "Failed to parse one or more operands in emulated"));
+          labels = [];
+          t.popToNextLine();
+          continue;
+        }
+        instructions.add(DoubleOperandInstruction(line, targetMnemonic, labels, instructionInfo[targetMnemonic]!, operands.first!, operands.second!, bw));
+//        print("next after emulated: $next");
+        labels = [];
+        continue;
+      }
       // check for number of arguments etc - special case for jump
       if (info.argCount == -1) { // jump
         Token next = t.peek();
         if (next.token == Tokens.value) {
           t.pop();
-          instructions.add(JumpInstruction(mnemonic, labels, info, LabelOrValue.val(next.value)));
+          instructions.add(JumpInstruction(line, mnemonic, labels, info, LabelOrValue.val(next.value)));
           labels = [];
           continue;
         } else if (next.token == Tokens.labelVal) {
           t.pop();
-          instructions.add(JumpInstruction(mnemonic, labels, info, LabelOrValue.lbl(next.value)));
+          instructions.add(JumpInstruction(line, mnemonic, labels, info, LabelOrValue.lbl(next.value)));
           labels = [];
           continue;
         } else {
@@ -893,11 +1173,16 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
           continue;
         }
       } else if (info.argCount == 0) {
-        instructions.add(RetiInstruction(labels, info));
+        instructions.add(RetiInstruction(line, labels, info));
         labels = [];
         continue;
       } else if (info.argCount == 1) {
         Token next = t.peek();
+        bool bw = false;
+        if (next.token == Tokens.modeInd) {
+          bw = t.pop().value;
+          next = t.peek();
+        }
         if (next.isArg) {
           t.pop();
           void fail(String expected, Token got) {
@@ -907,7 +1192,7 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
           }
           Operand? op1 = parseOperandFromStream(next, t, fail);
           if (op1 != null) {
-            instructions.add(SingleOperandInstruction(mnemonic, labels, info, op1));
+            instructions.add(SingleOperandInstruction(line, mnemonic, labels, info, op1, bw));
             labels = [];
           }
           continue;
@@ -922,6 +1207,11 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
         Operand op2;
 
         Token next = t.peek();
+        bool bw = false;
+        if (next.token == Tokens.modeInd) {
+          bw = t.pop().value;
+          next = t.peek();
+        }
         if (next.isArg) {
           t.pop();
           void fail(String expected, Token got) {
@@ -962,7 +1252,7 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
           t.popToNextLine();
           continue;
         }
-        instructions.add(DoubleOperandInstruction(mnemonic, labels, info, op1, op2));
+        instructions.add(DoubleOperandInstruction(line, mnemonic, labels, info, op1, op2, bw));
         labels = [];
         continue;
       } else {
@@ -986,7 +1276,52 @@ void printInstructions(List<Instruction> instructions) {
 }
 
 
-void parse(String txt) {
+Pair<Map<int, int>, Map<String, int>> calculateAddresses(int pcStart, List<Instruction> instructions) {
+  Map<int, int> lineToAddress = {};
+  Map<String, int> lblToAddress = {};
+
+  int pc = pcStart;
+
+  for (Instruction instruction in instructions) {
+    lineToAddress[instruction.lineNo] = pc;
+    for (String label in instruction.labels) {
+      lblToAddress[label] = pc;
+    }
+    pc += instruction.numWords * 2;
+  }
+
+  return Pair(lineToAddress, lblToAddress);
+}
+
+
+Uint8List compile(int pcStart, List<Instruction> instructions, Map<String, int> labelAddresses) {
+  List<int> compiled = [];
+  int pc = pcStart;
+  for (Instruction instruction in instructions) {
+    try {
+      compiled.addAll(instruction.compiled(labelAddresses, pc));
+    } catch (e) {
+      print("\n\n\nError compiling $instruction (pc $pc)");
+      rethrow;
+    }
+    pc += instruction.numWords * 2;
+  }
+  Uint8List out = Uint8List(2 + (compiled.length * 2));
+  out[0] = (pcStart >> 8) & 0xff;
+  out[1] = pcStart & 0xff;
+  for (int i = 0; i < compiled.length; i++) {
+    int word = compiled[i];
+    int b1 = (word >> 8) & 0xff;
+    int b2 = word & 0xff;
+    out[2 + i*2] = b1;
+    out[2 + i*2 + 1] = b2;
+  }
+  return out;
+}
+
+
+Future<void> parse(String txt, [int codeStart = 0x4400]) async {
+  _initEmulated();
   List<Line> lines = parseLines(txt);
 
   List<Pair<Line, String>> erroringLines = [];
@@ -995,17 +1330,26 @@ void parse(String txt) {
 
   List<Token> tokens = parseTokens(lines, erroringLines);
 
-  printErrors(erroringLines);
+  printTokenizerErrors(erroringLines);
   printTokens(tokens);
 
-  List<Pair<int, String>> errors = [];
-  List<Instruction> instructions = parseInstructions(tokens, errors);
-  print(errors);
+  List<Pair<int, String>> instructionParserErrors = [];
+  List<Instruction> instructions = parseInstructions(tokens, instructionParserErrors);
+
+  printInstructionParserErrors(instructionParserErrors);
   printInstructions(instructions);
+
+  Pair<Map<int, int>, Map<String, int>> addressMaps = calculateAddresses(codeStart, instructions); // <{line:addr}, {lbl:addr}>
+
+  Map<String, int> labelAddresses = addressMaps.second;
+
+  Uint8List compiled = compile(codeStart, instructions, labelAddresses);
+  var out = File("test_file.bin");
+  await out.writeAsBytes(compiled, flush: true);
 }
 
 
-void main() {
+void main() async {
   var awesome = Awesome();
   print('awesome: ${awesome.isAwesome}');
   print('${Fore.RED}hi');
@@ -1013,16 +1357,20 @@ void main() {
   print("and this${Fore.RESET}. but not ${Back.LIGHTBLUE_EX}this${Style.RESET_ALL}");
   print("\n\n");
   //*
-  parse("""test:
+  await parse("""test:
 ; this is a comment
+jmp 0x2
 test2: add R12 R1; so is this
 add @r14+ r4
 jmp test2
 jmp 0x12
-jmp 15
-jmp -0x53
+jmp 16
+jmp -0x54
+dint ; emulated example
+br r7 ; emulated example 2
 """);// */
-  /*parse(r"""
+  /*
+  await parse(r"""
 MOV #0x4400, SP
 .define "R6", Test$Macro_1
 AdD #10 [Test$Macro_1] ;comment
@@ -1218,5 +1566,5 @@ mov     0x4(sp), r15
 add     #0x6, sp
 ret
 
-""");*/
+""");// */
 }
