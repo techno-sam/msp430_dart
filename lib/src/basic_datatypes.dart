@@ -1,12 +1,6 @@
-// TODO: Put public facing types in this file.
 import 'dart:core' as core;
 import 'dart:core';
 import 'package:binary/binary.dart';
-
-/// Checks if you are awesome. Spoiler: you are.
-class Awesome {
-  bool get isAwesome => true;
-}
 
 class Pair<A, B> {
   final A first;
