@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:msp430_dart/msp430_dart.dart';
+import '../msp430_dart.dart';
 
 /*
 Assembly steps:

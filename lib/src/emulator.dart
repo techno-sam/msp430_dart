@@ -1,5 +1,6 @@
-import 'package:msp430_dart/msp430_dart.dart';
 import 'package:binary/binary.dart';
+
+import 'basic_datatypes.dart';
 
 class ExecutionError extends ArgumentError {
   ExecutionError(dynamic message) : super(message);
