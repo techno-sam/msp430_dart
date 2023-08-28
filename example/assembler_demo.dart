@@ -21,7 +21,7 @@ jmp -0x54
 jmp fake
 dint ; emulated example
 br r7 ; emulated example 2
-""", silent: true);// */
+""", silent: false);// */
   if (compiled == null) {
     print("Compilation failed");
   } else {

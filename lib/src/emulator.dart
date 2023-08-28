@@ -490,7 +490,9 @@ class Computer {
     check biggest 3 bits for jump, then check biggest 6 bits for single operand, otherwise double operand
      */
     instruction &= 0xffff;
-    if (instruction >> 13 == 1) { // 0b001
+    if (instruction == 0) {
+      _print("It's empty...");
+    } else if (instruction >> 13 == 1) { // 0b001
       _print("It's a jump instruction");
       _executeJump(instruction);
     } else if (instruction >> 10 == 4) { // 0b000100

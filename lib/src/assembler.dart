@@ -476,7 +476,13 @@ class LabelOrValue {
   String toString() => hasValue ? "$value" : "'$label'";
 
   int get(Map<String, int> labelAddresses) {
-    return value != null ? value! : labelAddresses[label!]!;
+    if (value != null) return value!;
+    if (labelAddresses[label!] != null) {
+      return labelAddresses[label!]!;
+    } else {
+      throw "Label '$label' not found";
+    }
+    throw AssertionError();
   }
 }
 
