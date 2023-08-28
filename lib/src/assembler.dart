@@ -1313,6 +1313,7 @@ Uint8List compile(
 
   if (errors.isNotEmpty && errorConsumer != null) {
     errorConsumer(errors);
+    throw "Errors found during compilation";
   }
 
   Uint8List out = Uint8List(2 + (compiled.length * 2));
