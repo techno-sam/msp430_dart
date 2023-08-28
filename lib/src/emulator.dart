@@ -12,6 +12,14 @@ class Register {
   Uint8 _low = Uint8.zero;
   Register(this.number);
 
+  void Function()? onChanged;
+
+  void _onChanged() {
+    if (onChanged != null) {
+      onChanged!();
+    }
+  }
+
   void runAssertions() {}
 
   Uint8Couple get() => Uint8Couple(_high, _low);
@@ -19,10 +27,11 @@ class Register {
     _high = couple.high;
     _low = couple.low;
     runAssertions();
+    _onChanged();
   }
 
   int getWordInt() {
-    return (_high.value >> 8) + _low.value;
+    return (_high.value << 8) + _low.value;
   }
 
   Uint16 getWord() {
