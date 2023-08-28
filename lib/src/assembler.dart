@@ -1301,10 +1301,10 @@ Uint8List compile(
       compiled.addAll(instruction.compiled(labelAddresses, pc));
     } catch (e) {
       if (errorConsumer == null) {
-        print("\n\n\nError compiling $instruction (pc $pc)");
+        print("\n\n\nError compiling $instruction (pc $pc) (e $e)");
         rethrow;
       } else {
-        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc)";
+        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) (e $e)";
       }
     }
     pc += instruction.numWords * 2;
