@@ -600,10 +600,10 @@ class OperandRegisterIndirect extends Operand {
   int get src => _reg;
 
   @override
-  int get ad => throw UnimplementedError("Indirect mode not supported as destination (@$_reg${_autoincrement ? '+' : ''})");
+  int get ad => throw UnimplementedError("Indirect mode not supported as destination (@r$_reg${_autoincrement ? '+' : ''})");
 
   @override
-  int get dst => throw UnimplementedError("Indirect mode not supported as destination (@$_reg${_autoincrement ? '+' : ''})");
+  int get dst => throw UnimplementedError("Indirect mode not supported as destination (@r$_reg${_autoincrement ? '+' : ''})");
 
   @override
   String toString() => "RegInd @r$_reg${_autoincrement ? '+' : ''}";
@@ -1302,10 +1302,10 @@ Uint8List compile(
     } catch (e) {
       var errorDescription = e is UnimplementedError ? e.message : e;
       if (errorConsumer == null) {
-        print("\n\n\nError compiling $instruction (pc $pc) (e $errorDescription)");
+        print("\n\n\nError compiling $instruction (pc $pc) $errorDescription");
         rethrow;
       } else {
-        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) (e $errorDescription)";
+        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) $errorDescription";
       }
     }
     pc += instruction.numWords * 2;
