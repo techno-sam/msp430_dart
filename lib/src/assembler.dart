@@ -1287,18 +1287,33 @@ Pair<Map<int, int>, Map<String, int>> calculateAddresses(int pcStart, List<Instr
 }
 
 
-Uint8List compile(int pcStart, List<Instruction> instructions, Map<String, int> labelAddresses) {
+Uint8List compile(
+    int pcStart,
+    List<Instruction> instructions,
+    Map<String, int> labelAddresses,
+    {void Function(Map<int, String>)? errorConsumer}
+    ) {
+  Map<int, String> errors = {};
   List<int> compiled = [];
   int pc = pcStart;
   for (Instruction instruction in instructions) {
     try {
       compiled.addAll(instruction.compiled(labelAddresses, pc));
     } catch (e) {
-      print("\n\n\nError compiling $instruction (pc $pc)");
-      rethrow;
+      if (errorConsumer == null) {
+        print("\n\n\nError compiling $instruction (pc $pc)");
+        rethrow;
+      } else {
+        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc)";
+      }
     }
     pc += instruction.numWords * 2;
   }
+
+  if (errors.isNotEmpty && errorConsumer != null) {
+    errorConsumer(errors);
+  }
+
   Uint8List out = Uint8List(2 + (compiled.length * 2));
   out[0] = (pcStart >> 8) & 0xff;
   out[1] = pcStart & 0xff;
@@ -1358,7 +1373,7 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
     if (errors.isNotEmpty) {
       throw "Errors found, can't compile";
     }
-    return compile(codeStart, instructions, labelAddresses);
+    return compile(codeStart, instructions, labelAddresses, errorConsumer: errorConsumer);
   } catch (e) {
     return null;
   }
