@@ -600,10 +600,10 @@ class OperandRegisterIndirect extends Operand {
   int get src => _reg;
 
   @override
-  int get ad => throw UnimplementedError();
+  int get ad => throw UnimplementedError("Indirect mode not supported as destination (@$_reg${_autoincrement ? '+' : ''})");
 
   @override
-  int get dst => throw UnimplementedError();
+  int get dst => throw UnimplementedError("Indirect mode not supported as destination (@$_reg${_autoincrement ? '+' : ''})");
 
   @override
   String toString() => "RegInd @r$_reg${_autoincrement ? '+' : ''}";
@@ -669,10 +669,10 @@ class OperandImmediate extends Operand {
   int get src => _extensionWordSkippable ? specialImmediates[_val.value]!.second : 0; // r0 (pc)
 
   @override
-  int get ad => throw UnimplementedError();
+  int get ad => throw UnimplementedError("Immediate mode not supported as destination ($_val)");
 
   @override
-  int get dst => throw UnimplementedError();
+  int get dst => throw UnimplementedError("Immediate mode not supported as destination ($_val)");
 
   @override
   String toString() => "Imm #$_val";
@@ -1300,11 +1300,12 @@ Uint8List compile(
     try {
       compiled.addAll(instruction.compiled(labelAddresses, pc));
     } catch (e) {
+      var errorDescription = e is UnimplementedError ? e.message : e;
       if (errorConsumer == null) {
-        print("\n\n\nError compiling $instruction (pc $pc) (e $e)");
+        print("\n\n\nError compiling $instruction (pc $pc) (e $errorDescription)");
         rethrow;
       } else {
-        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) (e $e)";
+        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) (e $errorDescription)";
       }
     }
     pc += instruction.numWords * 2;
