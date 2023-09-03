@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:binary/binary.dart';
 
 import 'basic_datatypes.dart';
@@ -8,8 +10,7 @@ class ExecutionError extends ArgumentError {
 
 class Register {
   final int number; // this is the id
-  Uint8 _high = Uint8.zero;
-  Uint8 _low = Uint8.zero;
+  int _value = 0;
   Register(this.number);
 
   void Function()? onChanged;
@@ -22,34 +23,25 @@ class Register {
 
   void runAssertions() {}
 
-  Uint8Couple get() => Uint8Couple(_high, _low);
-  void set(Uint8Couple couple) {
-    _high = couple.high;
-    _low = couple.low;
-    runAssertions();
-    _onChanged();
-  }
-
   int getWordInt() {
-    return (_high.value << 8) + _low.value;
+    return _value;
   }
 
+  @Deprecated("Requires extra boxing, do not use for performance-critical code. Use getWordInt instead")
   Uint16 getWord() {
     return getWordInt().u16;
   }
 
   int getByteInt() {
-    return _low.value;
+    return _value & 0xff;
   }
 
+  @Deprecated("Requires extra boxing, do not use for performance-critical code. Use getByteInt instead")
   Uint8 getByte() {
     return getByteInt().u8;
   }
 
   void setWord(int value, [bool signed = false]) {
-    if (value != overflowU16(value)) {
-      throw ExecutionError("Overflow value");
-    }
     if (value < 0) {
       if (signed && value < 0) {
         value = (value + 1).abs() ^ 0xffff;
@@ -58,13 +50,19 @@ class Register {
       }
     }
 
-    set(Uint8Couple.fromU16(value.u16));
+    _value = value;
+    assert(() {
+      if (value != value & 0xffff) {
+        throw ExecutionError("Overflow value");
+      }
+      runAssertions();
+      return true;
+    }());
+    _onChanged();
   }
   
   void setByte(int value, [bool signed = false]) {
-    if (value != overflowU8(value)) {
-      throw ExecutionError("Overflow value");
-    }
+
     if (value < 0) {
       if (signed) {
         value = (value + 1).abs() ^ 0xff;
@@ -72,13 +70,16 @@ class Register {
         throw ExecutionError("Attempting to set a negative value using unsigned mode");
       }
     }
-    _high = Uint8.zero;
-    _low = value.u8;
-    runAssertions();
+    _value = value;
+    assert(() {
+      runAssertions();
+      if (value != value & 0xff) {
+        throw ExecutionError("Overflow value");
+      }
+      return true;
+    }());
+    _onChanged();
   }
-
-  Uint8Couple get contents => get();
-  set contents(Uint8Couple contents) => set(contents);
 }
 
 class ProgramCounterRegister extends Register {
@@ -225,7 +226,8 @@ class ConstantGeneratorRegister extends Register {
 }
 
 class MemoryMap {
-  late List<int> _memory; // list of bytes
+//  late List<int> _memory; // list of bytes
+  late Uint8List _memory;
   final List<int> _changedAddresses = [];
   bool _trackChanges = false;
 
@@ -242,7 +244,7 @@ class MemoryMap {
   int get resetCount => _resetCount;
 
   MemoryMap(int size) {
-    _memory = List<int>.filled(size, 0);
+    _memory = Uint8List(size);//List<int>.filled(size, 0);
   }
 
   void reset() {
@@ -252,6 +254,7 @@ class MemoryMap {
   }
 
   void handleChanges(void Function(int) handleChange) {
+    if (!_trackChanges) return;
     for (int changedAddress in _changedAddresses) {
       handleChange(changedAddress);
     }
@@ -287,6 +290,8 @@ class MemoryMap {
     }
     _memory[index] = (value >> 8) & 0xff;
     _memory[index + 1] = value & 0xff;
+    _markChange(index);
+    _markChange(index + 1);
   }
 
   int getByte(int index) {
@@ -300,7 +305,8 @@ class MemoryMap {
     if (index < 0 || index + 1 >= _memory.length) {
       throw ExecutionError("Memory access out of bounds");
     }
-    _memory[index] = overflowU8(value);
+    _memory[index] = value & 0xff;
+    _markChange(index);
   }
 }
 
@@ -406,12 +412,25 @@ class Computer {
     for (int i = 4; i < 16; i++) {
       registers.add(Register(i));
     }
+    initNamedRegisters();
   }
 
-  ProgramCounterRegister get pc => registers[0] as ProgramCounterRegister;
-  StackPointerRegister get sp => registers[1] as StackPointerRegister;
-  StatusRegister get sr => registers[2] as StatusRegister;
-  ConstantGeneratorRegister get cg => registers[3] as ConstantGeneratorRegister;
+  void initNamedRegisters() {
+    _pc = registers[0] as ProgramCounterRegister;
+    _sp = registers[1] as StackPointerRegister;
+    _sr = registers[2] as StatusRegister;
+    _cg = registers[3] as ConstantGeneratorRegister;
+  }
+
+  late ProgramCounterRegister _pc;
+  late StackPointerRegister _sp;
+  late StatusRegister _sr;
+  late ConstantGeneratorRegister _cg;
+
+  ProgramCounterRegister get pc => _pc;
+  StackPointerRegister get sp => _sp;
+  StatusRegister get sr => _sr;
+  ConstantGeneratorRegister get cg => _cg;
 
   void reset() {
     for (var r in registers) {
@@ -458,6 +477,7 @@ class Computer {
   }
 
   void printStatus() {
+    if (silent) return;
     var space = " | ";
     var line1 = "";
     var line2 = "";
@@ -495,7 +515,8 @@ class Computer {
   }
 
   void step() {
-    if (pc.getWordInt() == 0x10 && specialInterrupts) {
+    int pcW = pc.getWordInt();
+    if (specialInterrupts && pcW == 0x10) {
       _print("Special case software interrupt");
 
       int interruptKind = sr.getWordInt() >> 8 & 0x7f; // (0b0111_1111) only uses 7 bits for interrupts (max 127)
@@ -507,8 +528,8 @@ class Computer {
       pc.setWord(pc.getWordInt() + 2);
       _execute(0x4130); // ret
     } else {
-      int instruction = getWord(pc.getWordInt());
-      pc.setWord(pc.getWordInt() + 2);
+      int instruction = getWord(pcW);
+      pc.setWord(pcW + 2);
       _execute(instruction);
       printStatus();
     }
@@ -525,22 +546,20 @@ class Computer {
     check biggest 3 bits for jump, then check biggest 6 bits for single operand, otherwise double operand
      */
     instruction &= 0xffff;
-    if (instruction == 0) {
-      _print("It's empty...");
-    } else if (instruction >> 13 == 1) { // 0b001
-      _print("It's a jump instruction");
-      _executeJump(instruction);
-    } else if (instruction >> 10 == 4) { // 0b000100
-      _print("It's a single operand instruction");
+    if (instruction >> 10 == 4) { // 0b000100
+      if (!silent) _print("It's a single operand instruction");
       _executeSingleOperand(instruction);
-    } else {
-      _print("It's a double operand instruction");
+    }  else if (instruction >> 13 == 1) { // 0b001
+      if (!silent) _print("It's a jump instruction");
+      _executeJump(instruction);
+    } else if (instruction != 0) {
+      if (!silent) _print("It's a double operand instruction");
       _executeDoubleOperand(instruction);
     }
   }
 
   void _executeJump(int instruction) {
-    _print("Jump instruction: ${instruction.toRadixString(16)}");
+    if (!silent) _print("Jump instruction: ${instruction.toRadixString(16)}");
     // decode target (lowest 10 bits)
     int offset = instruction & 0x3ff;
     if (offset > 512) {
@@ -549,42 +568,42 @@ class Computer {
     int condition = (instruction >> 10) & 0x7;
 
     if (condition == 0) { // JNE/JNZ
-      _print("JNE/JNZ");
+      if (!silent) _print("JNE/JNZ");
       if (sr.z) {
         return;
       }
     } else if (condition == 1) { // JEQ/JZ
-      _print("JEQ/JZ");
+      if (!silent) _print("JEQ/JZ");
       if (!sr.z) {
         return;
       }
     } else if (condition == 2) { // JNC/JLO
-      _print("JNC/JLO");
+      if (!silent) _print("JNC/JLO");
       if (sr.c) {
         return;
       }
     } else if (condition == 3) { // JC/JHS
-      _print("JC/JHS");
+      if (!silent) _print("JC/JHS");
       if (!sr.c) {
         return;
       }
     } else if (condition == 4) { // JN
-      _print("JN");
+      if (!silent) _print("JN");
       if (!sr.n) {
         return;
       }
     } else if (condition == 5) { // JGE
-      _print("JGE");
+      if (!silent) _print("JGE");
       if (sr.n ^ sr.v) {
         return;
       }
     } else if (condition == 6) { // JL
-      _print("JL");
+      if (!silent) _print("JL");
       if (!(sr.n ^ sr.v)) {
         return;
       }
     } else if (condition == 7) { // JMP
-      _print("JMP");
+      if (!silent) _print("JMP");
     } else {
       throw ExecutionError("Invalid jump instruction");
     }
@@ -662,7 +681,7 @@ class Computer {
   }
 
   void _executeSingleOperand(int instruction) { // PUSH implementation: decrement SP, then execute as usual
-    _print("Single operand instruction ${instruction.toRadixString(16)}");
+    if (!silent) _print("Single operand instruction ${instruction.toRadixString(16)}");
     int opcode = (instruction >> 7) & 0x7; // 3-bit (0b111)
     int srcReg = instruction & 0xf; // 4-bit (0b1111)
     int as = (instruction >> 4) & 0x3; // 2-bit (0b11)
@@ -672,13 +691,13 @@ class Computer {
     Pair<int, WriteTarget> srcWt = _getSrc(srcReg, as, bw);
     int src = srcWt.first;
     WriteTarget wt = srcWt.second;
-    _print("src: $src");
+    if (!silent) _print("src: $src");
 
     bool noWrite = false;
 
     // apply operation
     SingleOperandOpcodes opc = SingleOperandOpcodes.values[opcode];
-    _print(opc.name);
+    if (!silent) _print(opc.name);
     
     switch(opc) {
       case SingleOperandOpcodes.rrc:
@@ -764,16 +783,18 @@ class Computer {
   }
 
   void _setFlags(int src, int prevDst, int fullDst, int dst, bool byteMode) {
+    int dstSign = dst >> (byteMode ? 7 : 15) & 1;
+    int prevDstSign = prevDst >> (byteMode ? 7 : 15) & 1;
     sr.zero = dst == 0;
-    sr.negative = (dst >> (byteMode ? 7 : 15) & 1) == 1;
+    sr.negative = dstSign == 1;
     sr.carry = fullDst > (byteMode ? 0xff : 0xffff);
     // overflow is set if the sign of the operands is the same, and the sign of the result is different (e.g. positive + positive = negative, or negative + negative = positive)
-    sr.overflow = ((prevDst >> (byteMode ? 7 : 15) & 1) == (src >> (byteMode ? 7 : 15) & 1))
-        && ((prevDst >> (byteMode ? 7 : 15) & 1) != (dst >> (byteMode ? 7 : 15) & 1));
+    sr.overflow = (prevDstSign == (src >> (byteMode ? 7 : 15) & 1))
+        && (prevDstSign != dstSign);
   }
 
   void _executeDoubleOperand(int instruction) { // MOV order: read value, increment if needed, set value
-    _print("Double operand instruction ${instruction.toRadixString(16)}");
+    if (!silent) _print("Double operand instruction ${instruction.toRadixString(16)}");
     int opcode = (instruction >> 12) & 0xf; // 4-bit (0b1111)
     int srcReg = (instruction >> 8) & 0xf; // 4-bit (0b1111)
     int ad = (instruction >> 7) & 0x1; // 1-bit (0b1)
@@ -805,13 +826,13 @@ class Computer {
       }
       wt = MemoryWriteTarget(offset, this);
     }
-    _print("dst: $dst, wt: $wt");
+    if (!silent) _print("dst: $dst, wt: $wt");
 
     bool noWrite = false;
 
     DoubleOperandOpcodes opc = DoubleOperandOpcodes.values[opcode - 4];
 
-    _print(opc.name);
+    if (!silent) _print(opc.name);
     switch (opc) {
       case DoubleOperandOpcodes.mov:
         dst = src;

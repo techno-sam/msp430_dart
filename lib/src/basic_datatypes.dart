@@ -82,10 +82,11 @@ class Uint8Couple extends Couple<Uint8> {
   static const Uint8Couple zero = Uint8Couple(Uint8.zero, Uint8.zero);
 }
 
-int overflowU16(int x) {
+// these methods are slow
+/*int overflowU16(int x) {
   return x & 0xffff;
 }
 
 int overflowU8(int x) {
   return x & 0xff;
-}
+}*/
