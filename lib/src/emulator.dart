@@ -226,9 +226,42 @@ class ConstantGeneratorRegister extends Register {
 
 class MemoryMap {
   late List<int> _memory; // list of bytes
+  final List<int> _changedAddresses = [];
+  bool _trackChanges = false;
+
+  set trackChanges(bool trackChanges) {
+    if (_trackChanges == trackChanges) return;
+    _trackChanges = trackChanges;
+
+    if (!_trackChanges) {
+      _changedAddresses.clear();
+    }
+  }
+
+  int _resetCount = 0;
+  int get resetCount => _resetCount;
 
   MemoryMap(int size) {
     _memory = List<int>.filled(size, 0);
+  }
+
+  void reset() {
+    _memory.fillRange(0, _memory.length, 0);
+    _changedAddresses.clear();
+    _resetCount++;
+  }
+
+  void handleChanges(void Function(int) handleChange) {
+    for (int changedAddress in _changedAddresses) {
+      handleChange(changedAddress);
+    }
+    _changedAddresses.clear();
+  }
+
+  void _markChange(int changedAddress) {
+    if (_trackChanges && !_changedAddresses.contains(changedAddress)) {
+      _changedAddresses.add(changedAddress);
+    }
   }
 
   int get length => _memory.length;
@@ -381,8 +414,10 @@ class Computer {
   ConstantGeneratorRegister get cg => registers[3] as ConstantGeneratorRegister;
 
   void reset() {
-    registers.forEach((Register r) => r.setWord(0));
-    memory = MemoryMap(0x10000);
+    for (var r in registers) {
+      r.setWord(0);
+    }
+    memory.reset();
     _outputBuffer = [];
   }
 
