@@ -516,7 +516,7 @@ class Computer {
 
   void step() {
     int pcW = pc.getWordInt();
-    if (specialInterrupts && pcW == 0x10) {
+    /*if (specialInterrupts && pcW == 0x10) {
       _print("Special case software interrupt");
 
       int interruptKind = sr.getWordInt() >> 8 & 0x7f; // (0b0111_1111) only uses 7 bits for interrupts (max 127)
@@ -527,12 +527,17 @@ class Computer {
 
       pc.setWord(pc.getWordInt() + 2);
       _execute(0x4130); // ret
-    } else {
+    } else {*/
       int instruction = getWord(pcW);
       pc.setWord(pcW + 2);
       _execute(instruction);
-      printStatus();
-    }
+      //printStatus();
+    //}
+  }
+
+  void stepWithStatus() {
+    step();
+    printStatus();
   }
 
   void _execute(int instruction) {
