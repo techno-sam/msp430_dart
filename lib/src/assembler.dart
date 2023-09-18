@@ -58,6 +58,8 @@ enum Tokens<T> {
   argSym<void>(null),
   argImm<void>(null),
   argAbs<void>(null),
+  dataMode<void>(null),
+  cString8Data<String>("")
   ;
   final T _sham;
   const Tokens(this._sham);
@@ -93,6 +95,10 @@ class Token<T> {
       color = Fore.MAGENTA;
     } else if ([Tokens.argRegd, Tokens.argIdx, Tokens.argRegi, Tokens.argRegia, Tokens.argSym, Tokens.argImm, Tokens.argAbs].contains(token)) {
       color = Fore.LIGHTRED_EX;
+    } else if (token == Tokens.dataMode) {
+      color = Fore.BLUE;
+    } else if (token == Tokens.cString8Data) {
+      color = Fore.LIGHTCYAN_EX;
     }
     return '$color${token.name}<$T>[$value]${Style.RESET_ALL}';
   }
@@ -288,9 +294,12 @@ List<Token>? parseArgument(String txt) {
 
 List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines) {
   List<Token> tokens = [];
+  List<Token> dataTokens = [Tokens.dataMode()];
+  bool dataMode = false;
   for (Line line in lines) {
     List<Token> tentativeTokens = [];
     tentativeTokens.add(Tokens.lineStart(line.num));
+    dataTokens.add(Tokens.lineStart(line.num));
     String val = line.contents.trim();
     if (val.contains(";")) {
       val = val.split(";")[0];
@@ -299,6 +308,28 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
       tokens.addAll(tentativeTokens);
       continue;
     }
+
+    // check for data mode
+    if (re.dataMode.firstMatch(val) != null) {
+      if (dataMode) {
+        erroringLines.add(line.error("Already in data mode"));
+        continue;
+      }
+      dataMode = true;
+      tokens.addAll(tentativeTokens);
+      continue;
+    }
+
+    if (re.textMode.firstMatch(val) != null) {
+      if (!dataMode) {
+        erroringLines.add(line.error("Already in text mode"));
+        continue;
+      }
+      dataMode = false;
+      tokens.addAll(tentativeTokens);
+      continue;
+    }
+
     if (val.contains(":")) { // check for a label
       List<String> parts = val.split(":");
       if (parts.length > 2) {
@@ -315,10 +346,21 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
       label = match!.group(1)!;
       tentativeTokens.add(Tokens.label(label));
       if (val == '') {
-        tokens.addAll(tentativeTokens);
+        (dataMode ? dataTokens : tokens).addAll(tentativeTokens);
         continue;
       }
     }
+
+    if (dataMode) {
+      RegExpMatch? cString8Match = re.cString8.firstMatch(val);
+      if (cString8Match != null) {
+        dataTokens.add(Tokens.cString8Data(cString8Match.namedGroup("string")!));
+        continue;
+      }
+      erroringLines.add(line.error("Non-data value found in data block"));
+      continue;
+    }
+
     List<String> matches = re.whitespaceSplit.allMatches(val)
         .map((e) => (e.group(1) ?? '').trim())
         .where((e) => e != '')
@@ -409,6 +451,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
     }
     tokens.addAll(tentativeTokens);
   }
+  tokens.addAll(dataTokens);
   return tokens;
 }
 
@@ -836,6 +879,54 @@ class RetiInstruction extends Instruction {
   }
 }
 
+abstract class DataInstruction extends Instruction {
+  DataInstruction(int lineNo, List<String> labels) : super(lineNo, "data", labels, dataInfo);
+}
+
+// Null byte-terminated C-style string (8 bit chars)
+class CString8DataInstruction extends DataInstruction {
+  final String value;
+  CString8DataInstruction(super.lineNo, super.labels, {required this.value}) {
+    for (int char in value.codeUnits) {
+      int truncated = char & 0xff;
+      if (truncated != char) {
+        throw RangeError("Character out of range for 8-bit cString");
+      }
+    }
+  }
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    List<int> byteParts = List.filled(value.length + 1, 0);
+    int i = 0;
+    for (int char in value.codeUnits) {
+      byteParts[i] = char & 0xff;
+      i++;
+    }
+
+    List<int> wordParts = List.filled(numWords, 0);
+    for (int i = 0; i < wordParts.length; i++) {
+      int firstIdx = i * 2;
+      int secondIdx = firstIdx + 1;
+      int word = byteParts[firstIdx] << 8;
+      if (secondIdx < byteParts.length) {
+        word += byteParts[secondIdx];
+      }
+
+      wordParts[i] = word;
+    }
+    return wordParts;
+  }
+
+  @override
+  int get numWords => ((value.length + 1.0) / 2.0).ceil();
+
+  @override
+  String toString() {
+    return ".cstr8 '$value' $labels";
+  }
+}
+
 
 class InstrInfo {
   final String opCode;
@@ -843,6 +934,8 @@ class InstrInfo {
   final bool supportBW;
   const InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
 }
+
+const InstrInfo dataInfo = InstrInfo(0, "");
 
 class EmulatedInstrInfo extends InstrInfo {
   late final bool hasBW;
@@ -1032,13 +1125,27 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
   int line = 0;
   List<Instruction> instructions = [];
   List<String> labels = [];
+  bool dataMode = false;
   while (t.isNotEmpty) {
     Token token = t.pop();
     if (token.token == Tokens.lineStart) {
       line = token.value;
     } else if (token.token == Tokens.label) {
       labels.add(token.value);
-    } else if (token.token == Tokens.mnemonic) {
+    } else if (token.token == Tokens.dataMode) {
+      dataMode = true;
+      labels = [];
+    } else if (dataMode && token.token == Tokens.cString8Data) {
+      String value = token.value;
+      try {
+        instructions.add(CString8DataInstruction(line, labels, value: value));
+      } on RangeError {
+        erroringLines.add(Pair(line, "Out-of-range character in `$value`"));
+      }
+      labels = [];
+      t.popToNextLine();
+      continue;
+    } else if (!dataMode && token.token == Tokens.mnemonic) {
       // parsing hell
       String mnemonic = token.value;
       InstrInfo? info = instructionInfo[mnemonic];

@@ -272,7 +272,7 @@ class MemoryMap {
   bool get isNotEmpty => _memory.isNotEmpty;
 
   int getWord(int index) {
-    if (index < 0 || index + 1 >= _memory.length) {
+    if (index < 0 || index + 1 > _memory.length) {
       throw ExecutionError("Memory access out of bounds");
     }
     if (index % 2 != 0) {
@@ -282,7 +282,7 @@ class MemoryMap {
   }
 
   void setWord(int index, int value) {
-    if (index < 0 || index + 1 >= _memory.length) {
+    if (index < 0 || index + 1 > _memory.length) {
       throw ExecutionError("Memory access out of bounds");
     }
     if (index % 2 != 0) {
@@ -295,14 +295,14 @@ class MemoryMap {
   }
 
   int getByte(int index) {
-    if (index < 0 || index + 1 >= _memory.length) {
+    if (index < 0 || index + 1 > _memory.length) {
       throw ExecutionError("Memory access out of bounds");
     }
     return _memory[index];
   }
 
   void setByte(int index, int value) {
-    if (index < 0 || index + 1 >= _memory.length) {
+    if (index < 0 || index + 1 > _memory.length) {
       throw ExecutionError("Memory access out of bounds");
     }
     _memory[index] = value & 0xff;
@@ -731,7 +731,7 @@ class Computer {
         src >>= 1;
         src |= msbToOr;
         sr.n = (src >> (bw ? 7 : 15) & 1) == 1;
-        sr.n = src == 0;
+        sr.z = src == 0;
         sr.v = false;
         break;
       case SingleOperandOpcodes.sxt:

@@ -16,11 +16,25 @@ test2: add R12 R1; so is this
 add @r14+ r4
 jmp test2
 jmp 0x12
+
+.data
+my_string:
+.cstr8 test string
+
+.text
+
 jmp 16
 jmp -0x54
+
+.data
+.cstr8 next text!
+.text
+
 jmp fake
 dint ; emulated example
-br r7 ; emulated example 2
+fake: br r7 ; emulated example 2
+
+jmp 0 ; guard against 'executing' data section
 """, silent: false);// */
   if (compiled == null) {
     print("Compilation failed");
