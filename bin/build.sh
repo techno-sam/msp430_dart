@@ -1,0 +1,1 @@
+dart compile exe msp430_dart.dart
