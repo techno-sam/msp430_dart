@@ -954,9 +954,7 @@ class InstrInfo {
   String? _mnemonic;
   String get mnemonic => _mnemonic ?? "???";
   void setMnemonicOnce(String mnemonic) {
-    if (_mnemonic != null) {
-      _mnemonic = mnemonic;
-    }
+    _mnemonic ??= mnemonic;
   }
   InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
 }

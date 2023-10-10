@@ -1,3 +1,7 @@
+## 0.1.4
+
+- Fix mnemonic information in InstrInfo (again)
+
 ## 0.1.3
 
 - Fix mnemonic information in InstrInfo
