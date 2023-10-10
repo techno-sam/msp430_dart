@@ -1001,7 +1001,7 @@ SETZ	BIS #2,SR
 TST.x dst	CMP.x #0,dst
 """;
 
-Map<String, InstrInfo> instructionInfo = {
+final Map<String, InstrInfo> instructionInfo = {
   "rrc": InstrInfo(1, "000", true),
   "swpb": InstrInfo(1, "001", false),
   "rra": InstrInfo(1, "010", true),
@@ -1044,13 +1044,13 @@ Map<String, InstrInfo> instructionInfo = {
 };
 
 
-bool _emulatedInitialized = false;
+bool _instructionsInitialized = false;
 
-void _initEmulated() {
-  if (_emulatedInitialized) {
+void initInstructionInfo() {
+  if (_instructionsInitialized) {
     return;
   }
-  _emulatedInitialized = true;
+  _instructionsInitialized = true;
   for (String emulated in emulatedInstructions.split("\n")) {
     if (emulated == "") {
       continue;
@@ -1058,16 +1058,11 @@ void _initEmulated() {
     String mnemonic = emulated.split("\t")[0].replaceAll(" dst", "").replaceAll(".x", "").toLowerCase();
     instructionInfo[mnemonic] = EmulatedInstrInfo(emulated);
   }
-  _associateMnemonics();
-}
-
-void _associateMnemonics() {
+  
   for (MapEntry<String, InstrInfo> entry in instructionInfo.entries) {
     entry.value.setMnemonicOnce(entry.key);
   }
 }
-
-final void _staticInit = _initEmulated();
 
 Operand? parseOperandFromStream(Token nextArg, TokenStream t, Function(String, Token) fail) {
   switch (nextArg.token) {
@@ -1476,7 +1471,7 @@ Uint8List compile(
 
 
 Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<int, String>)? errorConsumer}) {
-  _initEmulated();
+  initInstructionInfo();
   List<Line> lines = parseLines(txt);
 
   List<Pair<Line, String>> erroringLines = [];

@@ -1,3 +1,7 @@
+## 0.1.6
+
+- Provide more classes for export
+
 ## 0.1.5
 
 - Fix static init
