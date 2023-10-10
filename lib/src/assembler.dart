@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023  Sam Wagenaar
+ *     Copyright (C) 2023-2023  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -14,7 +14,6 @@
  *
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
  */
 
 import 'dart:io';
@@ -951,10 +950,18 @@ class InstrInfo {
   final String opCode;
   final int argCount; // 0 is just for regi, 1 is single-operand arithmetic, 2 is two-operand arithmetic, -1 is jump
   final bool supportBW;
-  const InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
+
+  String? _mnemonic;
+  String get mnemonic => _mnemonic ?? "???";
+  void setMnemonicOnce(String mnemonic) {
+    if (_mnemonic != null) {
+      _mnemonic = _mnemonic;
+    }
+  }
+  InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
 }
 
-const InstrInfo dataInfo = InstrInfo(0, "");
+final InstrInfo dataInfo = InstrInfo(0, "");
 
 class EmulatedInstrInfo extends InstrInfo {
   late final bool hasBW;
@@ -1053,8 +1060,16 @@ void _initEmulated() {
     String mnemonic = emulated.split("\t")[0].replaceAll(" dst", "").replaceAll(".x", "").toLowerCase();
     instructionInfo[mnemonic] = EmulatedInstrInfo(emulated);
   }
+  _associateMnemonics();
 }
 
+void _associateMnemonics() {
+  for (MapEntry<String, InstrInfo> entry in instructionInfo.entries) {
+    entry.value.setMnemonicOnce(entry.key);
+  }
+}
+
+final void _staticInit = _associateMnemonics();
 
 Operand? parseOperandFromStream(Token nextArg, TokenStream t, Function(String, Token) fail) {
   switch (nextArg.token) {
