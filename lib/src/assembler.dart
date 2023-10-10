@@ -1067,7 +1067,7 @@ void _associateMnemonics() {
   }
 }
 
-final void _staticInit = _associateMnemonics();
+final void _staticInit = _initEmulated();
 
 Operand? parseOperandFromStream(Token nextArg, TokenStream t, Function(String, Token) fail) {
   switch (nextArg.token) {
