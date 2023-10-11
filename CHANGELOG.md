@@ -1,3 +1,7 @@
+## 0.1.8
+
+- Expose more information in operand classes
+
 ## 0.1.7
 
 - Provide even more classes for export

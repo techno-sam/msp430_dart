@@ -582,10 +582,10 @@ argAbs          - absolute
 
 class OperandRegisterDirect extends Operand {
 
-  final int _reg;
-  OperandRegisterDirect(this._reg) {
-    if (_reg < 0 || _reg > 15) {
-      throw ArgumentError("invalid register value $_reg");
+  final int reg;
+  OperandRegisterDirect(this.reg) {
+    if (reg < 0 || reg > 15) {
+      throw ArgumentError("invalid register value $reg");
     }
   }
 
@@ -599,26 +599,26 @@ class OperandRegisterDirect extends Operand {
   int get as => 0;
 
   @override
-  int get src => _reg;
+  int get src => reg;
 
   @override
   int get ad => 0;
 
   @override
-  int get dst => _reg;
+  int get dst => reg;
 
   @override
-  String toString() => "RegDir r$_reg";
+  String toString() => "RegDir r$reg";
 }
 
 class OperandIndexed extends Operand {
 
-  final int _reg;
-  final LabelOrValue _val;
+  final int reg;
+  final LabelOrValue val;
 
-  OperandIndexed(this._reg, this._val) {
-    if (_reg < 0 || _reg > 15) {
-      throw ArgumentError("invalid register value $_reg");
+  OperandIndexed(this.reg, this.val) {
+    if (reg < 0 || reg > 15) {
+      throw ArgumentError("invalid register value $reg");
     }
   }
 
@@ -626,31 +626,31 @@ class OperandIndexed extends Operand {
   bool get hasExtensionWord => true;
 
   @override
-  int? get extensionWord => _val.get(_labelAddressMap!);
+  int? get extensionWord => val.get(_labelAddressMap!);
 
   @override
   int get as => 01;
 
   @override
-  int get src => _reg;
+  int get src => reg;
 
   @override
   int get ad => 1;
 
   @override
-  int get dst => _reg;
+  int get dst => reg;
 
   @override
-  String toString() => "RegIdx $_val(r$_reg)";
+  String toString() => "RegIdx $val(r$reg)";
 }
 
 class OperandRegisterIndirect extends Operand {
 
-  final int _reg;
-  final bool _autoincrement;
-  OperandRegisterIndirect(this._reg, this._autoincrement) {
-    if (_reg < 0 || _reg > 15) {
-      throw ArgumentError("invalid register value $_reg");
+  final int reg;
+  final bool autoincrement;
+  OperandRegisterIndirect(this.reg, this.autoincrement) {
+    if (reg < 0 || reg > 15) {
+      throw ArgumentError("invalid register value $reg");
     }
   }
 
@@ -661,32 +661,32 @@ class OperandRegisterIndirect extends Operand {
   int? get extensionWord => null;
 
   @override
-  int get as => _autoincrement ? 3 : 2; // 0b11 : 0b10
+  int get as => autoincrement ? 3 : 2; // 0b11 : 0b10
 
   @override
-  int get src => _reg;
+  int get src => reg;
 
   @override
-  int get ad => throw UnimplementedError("Indirect mode not supported as destination (@r$_reg${_autoincrement ? '+' : ''})");
+  int get ad => throw UnimplementedError("Indirect mode not supported as destination (@r$reg${autoincrement ? '+' : ''})");
 
   @override
-  int get dst => throw UnimplementedError("Indirect mode not supported as destination (@r$_reg${_autoincrement ? '+' : ''})");
+  int get dst => throw UnimplementedError("Indirect mode not supported as destination (@r$reg${autoincrement ? '+' : ''})");
 
   @override
-  String toString() => "RegInd @r$_reg${_autoincrement ? '+' : ''}";
+  String toString() => "RegInd @r$reg${autoincrement ? '+' : ''}";
 }
 
 class OperandSymbolic extends Operand {
 
-  final LabelOrValue _val;
+  final LabelOrValue val;
 
-  OperandSymbolic(this._val);
+  OperandSymbolic(this.val);
 
   @override
   bool get hasExtensionWord => true;
 
   @override
-  int? get extensionWord => _pc == null ? null : (_val.get(_labelAddressMap!) - _pc!); // requires knowledge of Program Counter
+  int? get extensionWord => _pc == null ? null : (val.get(_labelAddressMap!) - _pc!); // requires knowledge of Program Counter
 
   @override
   int get as => 01; // actually indexed mode. shhh! don't tell anyone!
@@ -701,7 +701,7 @@ class OperandSymbolic extends Operand {
   int get dst => 0;
 
   @override
-  String toString() => "Sym $_val";
+  String toString() => "Sym $val";
 }
 
 
@@ -717,45 +717,45 @@ Map<int, Pair<int, int>> specialImmediates = { // value: <as, reg>
 
 class OperandImmediate extends Operand {
 
-  final LabelOrValue _val;
+  final LabelOrValue val;
 
-  OperandImmediate(this._val);
+  OperandImmediate(this.val);
 
-  bool get _extensionWordSkippable => _val.hasValue && specialImmediates.containsKey(_val.value);
+  bool get _extensionWordSkippable => val.hasValue && specialImmediates.containsKey(val.value);
 
   @override
   bool get hasExtensionWord => !_extensionWordSkippable;
 
   @override
-  int? get extensionWord => _extensionWordSkippable ? null : _val.get(_labelAddressMap!);
+  int? get extensionWord => _extensionWordSkippable ? null : val.get(_labelAddressMap!);
 
   @override
-  int get as => _extensionWordSkippable ? specialImmediates[_val.value]!.first : 3; // 0b11 actually register autoincrement
+  int get as => _extensionWordSkippable ? specialImmediates[val.value]!.first : 3; // 0b11 actually register autoincrement
 
   @override
-  int get src => _extensionWordSkippable ? specialImmediates[_val.value]!.second : 0; // r0 (pc)
+  int get src => _extensionWordSkippable ? specialImmediates[val.value]!.second : 0; // r0 (pc)
 
   @override
-  int get ad => throw UnimplementedError("Immediate mode not supported as destination ($_val)");
+  int get ad => throw UnimplementedError("Immediate mode not supported as destination ($val)");
 
   @override
-  int get dst => throw UnimplementedError("Immediate mode not supported as destination ($_val)");
+  int get dst => throw UnimplementedError("Immediate mode not supported as destination ($val)");
 
   @override
-  String toString() => "Imm #$_val";
+  String toString() => "Imm #$val";
 }
 
 class OperandAbsolute extends Operand {
 
-  final LabelOrValue _val;
+  final LabelOrValue val;
 
-  OperandAbsolute(this._val);
+  OperandAbsolute(this.val);
 
   @override
   bool get hasExtensionWord => true;
 
   @override
-  int? get extensionWord => _val.get(_labelAddressMap!);
+  int? get extensionWord => val.get(_labelAddressMap!);
 
   @override
   int get as => 01; // actually indexed mode
@@ -770,7 +770,7 @@ class OperandAbsolute extends Operand {
   int get dst => 2;
 
   @override
-  String toString() => "Abs &$_val";
+  String toString() => "Abs &$val";
 }
 
 
