@@ -1031,10 +1031,12 @@ class EmulatedInstrInfo extends InstrInfo {
   late final bool hasBW;
   late final String source;
   late final String dest;
+  late final bool isJMP;
   EmulatedInstrInfo(String data) : super(data.contains("dst") ? 1 : 0, 'unparsed emulated instruction') { // data looks like this: "ADC.x dst	ADDC.x #0,dst"
     List<String> split = data.split("\t");
     source = split[0];
     dest = split[1];
+    isJMP = instructionInfo[dest.split(" ")[0].toLowerCase()]?.argCount == -1;
 
     hasBW = source.contains(".x");
   }
@@ -1065,6 +1067,7 @@ SETC	BIS #1,SR
 SETN	BIS #4,SR
 SETZ	BIS #2,SR
 TST.x dst	CMP.x #0,dst
+HCF	JMP 0
 """;
 
 final Map<String, InstrInfo> instructionInfo = {
@@ -1338,6 +1341,12 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
         }
         // we now have enough to build an instruction without args
         String targetMnemonic = info.dest.split(" ")[0].replaceAll(".x", "").toLowerCase();
+        if (info.isJMP) {
+          int val = int.parse(info.dest.split(" ")[1]);
+          instructions.add(JumpInstruction(line, targetMnemonic, labels, instructionInfo[targetMnemonic]!, LabelOrValue.val(val)));
+          labels = [];
+          continue;
+        }
         Couple<String> args = info.dest.split(" ")[1].split(",").toCouple();
         Couple<TokenStream> argTokens = args.map((String arg) => TokenStream(parseArgument(arg) ?? []));
         if (argTokens.either((op) => op.isEmpty)) {

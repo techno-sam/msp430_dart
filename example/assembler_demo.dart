@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023  Sam Wagenaar
+ *     Copyright (C) 2023-2023  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -14,7 +14,6 @@
  *
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
  */
 
 import 'dart:typed_data';
@@ -35,6 +34,8 @@ test2: add R12 R1; so is this
 add @r14+ r4
 jmp test2
 jmp 0x12
+this_is_hcf:
+hcf
 
 .data
 my_string:
