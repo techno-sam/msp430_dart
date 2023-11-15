@@ -77,7 +77,8 @@ enum Tokens<T> {
   argImm<void>(null),
   argAbs<void>(null),
   dataMode<void>(null),
-  cString8Data<String>("")
+  cString8Data<String>(""),
+  interrupt<int>(0) // expects a labelVal to follow it
   ;
   final T _sham;
   const Tokens(this._sham);
@@ -116,6 +117,8 @@ class Token<T> {
     } else if (token == Tokens.dataMode) {
       color = Fore.BLUE;
     } else if (token == Tokens.cString8Data) {
+      color = Fore.LIGHTCYAN_EX;
+    } else if (token == Tokens.interrupt) {
       color = Fore.LIGHTCYAN_EX;
     }
     return '$color${token.name}<$T>[$value]${Style.RESET_ALL}';
@@ -377,6 +380,37 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
       }
       erroringLines.add(line.error("Non-data value found in data block"));
       continue;
+    }
+
+    { // interrupt
+      RegExpMatch? interruptMatch = re.interrupt.firstMatch(val);
+      if (interruptMatch != null) {
+        String? vectorDigits = interruptMatch.namedGroup("vector_digits");
+        String? vectorHex = interruptMatch.namedGroup("vector_hex");
+        String? targetLabel = interruptMatch.namedGroup("target_label");
+        if (vectorDigits == null && vectorHex == null) {
+          erroringLines.add(line.error("Failed to parse interrupt vector"));
+          continue;
+        }
+        int? vector;
+        if (vectorHex != null) {
+          vector = int.tryParse(vectorHex, radix: 16);
+        } else {
+          vector = int.tryParse(vectorDigits!);
+        }
+        if (vector == null) {
+          erroringLines.add(line.error("Failed to parse interrupt vector"));
+          continue;
+        }
+        if (targetLabel == null) {
+          erroringLines.add(line.error("Failed to parse interrupt target label"));
+          continue;
+        }
+        tentativeTokens.add(Tokens.interrupt(vector));
+        tentativeTokens.add(Tokens.labelVal(targetLabel));
+        tokens.addAll(tentativeTokens);
+        continue;
+      }
     }
 
     List<String> matches = re.whitespaceSplit.allMatches(val)
@@ -785,6 +819,19 @@ abstract class Instruction {
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc);
 }
 
+class PaddingInstruction extends Instruction {
+  final int words;
+  PaddingInstruction(int lineNo, List<String> labels, this.words) : super(0, 'padding', labels, nullInfo);
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    return List.filled(words, 0, growable: false);
+  }
+
+  @override
+  int get numWords => words;
+}
+
 class JumpInstruction extends Instruction {
   LabelOrValue target;
 
@@ -898,7 +945,7 @@ class RetiInstruction extends Instruction {
 }
 
 abstract class DataInstruction extends Instruction {
-  DataInstruction(int lineNo, List<String> labels) : super(lineNo, "data", labels, dataInfo);
+  DataInstruction(int lineNo, List<String> labels) : super(lineNo, "data", labels, nullInfo);
 }
 
 // Null byte-terminated C-style string (8 bit chars)
@@ -945,6 +992,25 @@ class CString8DataInstruction extends DataInstruction {
   }
 }
 
+class InterruptInstruction extends DataInstruction {
+  int vector;
+  LabelOrValue value;
+  InterruptInstruction(int lineNo, this.vector, this.value) : super(lineNo, []);
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
+    throw "Interrupt instructions should not be compiled, they are a special case";
+  }
+
+  @override
+  int get numWords => 0;
+  
+  @override
+  String toString() {
+    return ".interrupt '$vector'->$value";
+  }
+}
+
 
 class InstrInfo {
   final String opCode;
@@ -959,7 +1025,7 @@ class InstrInfo {
   InstrInfo(this.argCount, this.opCode, [this.supportBW = true]);
 }
 
-final InstrInfo dataInfo = InstrInfo(0, "");
+final InstrInfo nullInfo = InstrInfo(0, "");
 
 class EmulatedInstrInfo extends InstrInfo {
   late final bool hasBW;
@@ -1159,6 +1225,17 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> 
       line = token.value;
     } else if (token.token == Tokens.label) {
       labels.add(token.value);
+    } else if (token.token == Tokens.interrupt) {
+      labels = [];
+      int vector = token.value;
+      Token next = t.peek();
+      if (next.token != Tokens.labelVal) {
+        erroringLines.add(Pair(line, "Invalid token after interrupt instruction, expected label, got $next"));
+        t.popToNextLine();
+        continue;
+      }
+      t.pop(); // pop labelVal
+      instructions.add(InterruptInstruction(line, vector, LabelOrValue.lbl(next.value)));
     } else if (token.token == Tokens.dataMode) {
       dataMode = true;
       labels = [];
@@ -1426,6 +1503,15 @@ Pair<Map<int, int>, Map<String, int>> calculateAddresses(int pcStart, List<Instr
   return Pair(lineToAddress, lblToAddress);
 }
 
+class BinarySegment {
+  final int start;
+  int get wordCount => contents.length;
+  final List<int> contents; // each entry is WORD
+  List<int> get byteContents => contents.expand((int word) => [(word & 0xff00) >> 8, word & 0xff]).toList();
+
+  BinarySegment({required this.start, required this.contents});
+}
+
 
 Uint8List compile(
     int pcStart,
@@ -1434,39 +1520,61 @@ Uint8List compile(
     {void Function(Map<int, String>)? errorConsumer}
     ) {
   Map<int, String> errors = {};
-  List<int> compiled = [];
+  List<BinarySegment> segments = [];
+  List<BinarySegment> postFixSegments = [];
+  BinarySegment currentSegment = BinarySegment(start: pcStart, contents: []);
   int pc = pcStart;
   for (Instruction instruction in instructions) {
-    try {
-      compiled.addAll(instruction.compiled(labelAddresses, pc));
-    } catch (e) {
-      var errorDescription = e is UnimplementedError ? e.message : e;
-      if (errorConsumer == null) {
-        print("\n\n\nError compiling $instruction (pc $pc) $errorDescription");
-        rethrow;
-      } else {
-        errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) $errorDescription";
+    if (instruction is PaddingInstruction) {
+      if (currentSegment.contents.isNotEmpty) {
+        segments.add(currentSegment);
       }
+      pc += instruction.numWords * 2;
+      currentSegment = BinarySegment(start: pc, contents: []);
+    } else if (instruction is InterruptInstruction) {
+      postFixSegments.add(BinarySegment(start: instruction.vector, contents: [instruction.value.get(labelAddresses)]));
+    } else {
+      try {
+        currentSegment.contents.addAll(instruction.compiled(labelAddresses, pc));
+      } catch (e) {
+        var errorDescription = e is UnimplementedError ? e.message : e;
+        if (errorConsumer == null) {
+          print("\n\n\nError compiling $instruction (pc $pc) $errorDescription");
+          rethrow;
+        } else {
+          errors[instruction.lineNo] = "Cannot compile $instruction (pc $pc) $errorDescription";
+        }
+      }
+      pc += instruction.numWords * 2;
     }
-    pc += instruction.numWords * 2;
   }
+
+  if (currentSegment.contents.isNotEmpty) {
+    segments.add(currentSegment);
+  }
+
+  segments.add(BinarySegment(start: 0xfffe, contents: [pcStart])); // startup interrupt vector
+  segments.addAll(postFixSegments);
+
+  segments.sort((BinarySegment a, BinarySegment b) => a.start.compareTo(b.start));
 
   if (errors.isNotEmpty && errorConsumer != null) {
     errorConsumer(errors);
     throw "Errors found during compilation";
   }
 
-  Uint8List out = Uint8List(2 + (compiled.length * 2));
-  out[0] = (pcStart >> 8) & 0xff;
-  out[1] = pcStart & 0xff;
-  for (int i = 0; i < compiled.length; i++) {
-    int word = compiled[i];
-    int b1 = (word >> 8) & 0xff;
-    int b2 = word & 0xff;
-    out[2 + i*2] = b1;
-    out[2 + i*2 + 1] = b2;
-  }
-  return out;
+  List<int> out = [
+    0xff, 0xff, // format marker
+    (segments.length & 0xff00) >> 8, segments.length & 0xff, // segment count
+    for (BinarySegment segment in segments)
+      ...[
+        (segment.start & 0xff00) >> 8, segment.start & 0xff, // segment start
+        ((segment.wordCount*2) & 0xff00) >> 8, (segment.wordCount*2) & 0xff, // segment length (bytes)
+        ...segment.byteContents,
+      ],
+  ];
+
+  return Uint8List.fromList(out);
 }
 
 

@@ -14,12 +14,9 @@
  *
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
  */
 
-/// Support for doing something awesome.
-///
-/// More dartdocs go here.
+/// Note: the emulator is no longer supported, go use the rust implementation instead (https://github.com/techno-sam/msp430_rust)
 library msp430_dart;
 
 export 'src/basic_datatypes.dart';

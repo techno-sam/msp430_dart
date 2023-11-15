@@ -25,9 +25,10 @@ export 'src/basic_datatypes.dart' show Pair;
 export 'src/colors.dart' show Fore, Back, Style;
 export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled,
   Line, Tokens, Token, parseTokens, TokenStream, parseInstructions, Instruction,
-  SingleOperandInstruction, DoubleOperandInstruction, initInstructionInfo,
-  Operand, OperandAbsolute, OperandImmediate, OperandIndexed,
-  OperandRegisterDirect, OperandRegisterIndirect, OperandSymbolic;
+  SingleOperandInstruction, DoubleOperandInstruction, CString8DataInstruction,
+  InterruptInstruction, initInstructionInfo, Operand, OperandAbsolute,
+  OperandImmediate, OperandIndexed, OperandRegisterDirect,
+  OperandRegisterIndirect, OperandSymbolic;
 export 'src/emulator.dart' show Register, Computer, ExecutionError;
 
 import 'src/regexes.dart';

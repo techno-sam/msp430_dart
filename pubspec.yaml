@@ -1,6 +1,6 @@
 name: msp430_dart
 description: An assembler and emulator for the MSP430 written in Dart.
-version: 0.1.8
+version: 0.2.0
 repository: https://github.com/techno-sam/msp430_dart
 
 environment:

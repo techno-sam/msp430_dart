@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023  Sam Wagenaar
+ *     Copyright (C) 2023-2023  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -14,7 +14,6 @@
  *
  *     You should have received a copy of the GNU General Public License
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
  */
 
 import 'dart:core';
@@ -44,4 +43,7 @@ class Regex {
   RegExp textMode = RegExp(r"^\.text");
 
   RegExp cString8 = RegExp(r'^.cstr8 (?<string>.*)$');
+
+  // interrupts
+  RegExp interrupt = RegExp(r"^\.interrupt (?:(?:0[xX](?<vector_hex>[0-9a-fA-F]{1,4}))|(?<vector_digits>\d+)) (?<target_label>[A-z$_][A-z0-9$_]*)$");
 }
