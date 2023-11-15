@@ -313,6 +313,21 @@ List<Token>? parseArgument(String txt) {
   }
 }
 
+List<Token> _deduplicateLineStarts(List<Token> tokens) {
+  List<Token> out = [];
+  for (int i = 0; i < tokens.length; i++) {
+    Token token = tokens[i];
+    if (token.token == Tokens.lineStart) {
+      if (i == 0 || tokens[i - 1].token != Tokens.lineStart || tokens[i - 1].value != token.value) {
+        out.add(token);
+      }
+    } else {
+      out.add(token);
+    }
+  }
+  return out;
+}
+
 List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines) {
   List<Token> tokens = [];
   List<Token> dataTokens = [Tokens.dataMode()];
@@ -375,6 +390,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
     if (dataMode) {
       RegExpMatch? cString8Match = re.cString8.firstMatch(val);
       if (cString8Match != null) {
+        dataTokens.addAll(tentativeTokens);
         dataTokens.add(Tokens.cString8Data(cString8Match.namedGroup("string")!));
         continue;
       }
@@ -504,7 +520,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
     tokens.addAll(tentativeTokens);
   }
   tokens.addAll(dataTokens);
-  return tokens;
+  return _deduplicateLineStarts(tokens);
 }
 
 void printTokens(List<Token> tokens) {

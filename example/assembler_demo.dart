@@ -34,12 +34,12 @@ test2: add R12 R1; so is this
 add @r14+ r4
 jmp test2
 jmp 0x12
+mov my_string 0(r5)
 this_is_hcf:
 hcf
 
 .data
-my_string:
-.cstr8 test string
+my_string: .cstr8 test string
 
 .text
 
