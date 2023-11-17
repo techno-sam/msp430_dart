@@ -55,6 +55,16 @@ dint ; emulated example
 fake: br r7 ; emulated example 2
 
 jmp 0 ; guard against 'executing' data section
+
+\$loop:
+mov #0 r9
+jmp \$loop
+
+.locblk ; not the same locals!
+
+\$loop:
+mov #0 r9
+jmp \$loop
 """, silent: false);// */
   if (compiled == null) {
     print("Compilation failed");

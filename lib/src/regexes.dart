@@ -39,11 +39,12 @@ class Regex {
   RegExp jmpNumeric = RegExp(r"^(?<sign>[-+])?(?:(?:0x(?<hex>[0-9a-fA-F]{1,4}))|(?<digits>\d+))$");
 
   // data
-  RegExp dataMode = RegExp(r"^\.data");
-  RegExp textMode = RegExp(r"^\.text");
+  RegExp dataMode = RegExp(r"^\.data$");
+  RegExp textMode = RegExp(r"^\.text$");
 
   RegExp cString8 = RegExp(r'^.cstr8 (?<string>.*)$');
 
-  // interrupts
+  // special
   RegExp interrupt = RegExp(r"^\.interrupt (?:(?:0[xX](?<vector_hex>[0-9a-fA-F]{1,4}))|(?<vector_digits>\d+)) (?<target_label>[A-z$_][A-z0-9$_]*)$");
+  RegExp localBlock = RegExp(r"^\.locblk$");
 }

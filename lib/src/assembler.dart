@@ -17,6 +17,7 @@
  */
 
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import '../msp430_dart.dart';
@@ -88,6 +89,20 @@ enum Tokens<T> {
       throw AssertionError("$this requires an argument of type $T");
     }
     return Token<T>(this, value);
+  }
+
+  static Token<String> makeLabel(String value, String prefix) {
+    if (value.startsWith("\$")) {
+      value = prefix + value;
+    }
+    return Token<String>(label, value);
+  }
+
+  static Token<String> makeLabelVal(String value, String prefix) {
+    if (value.startsWith("\$")) {
+      value = prefix + value;
+    }
+    return Token<String>(labelVal, value);
   }
 
   bool get isArg => name.startsWith("arg");
@@ -331,6 +346,8 @@ List<Token> _deduplicateLineStarts(List<Token> tokens) {
 List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines) {
   List<Token> tokens = [];
   List<Token> dataTokens = [Tokens.dataMode()];
+  _LocalPrefixGenerator prefixGen = _LocalPrefixGenerator();
+  String localLabelPrefix = prefixGen.next();
   bool dataMode = false;
   for (Line line in lines) {
     List<Token> tentativeTokens = [];
@@ -338,7 +355,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
     dataTokens.add(Tokens.lineStart(line.num));
     String val = line.contents.trim();
     if (val.contains(";")) {
-      val = val.split(";")[0];
+      val = val.split(";")[0].trimRight();
     }
     if (val == "") {
       tokens.addAll(tentativeTokens);
@@ -380,7 +397,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
         continue;
       }
       label = match!.group(1)!;
-      tentativeTokens.add(Tokens.label(label));
+      tentativeTokens.add(Tokens.makeLabel(label, localLabelPrefix));
       if (val == '') {
         (dataMode ? dataTokens : tokens).addAll(tentativeTokens);
         continue;
@@ -423,8 +440,15 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
           continue;
         }
         tentativeTokens.add(Tokens.interrupt(vector));
-        tentativeTokens.add(Tokens.labelVal(targetLabel));
+        tentativeTokens.add(Tokens.makeLabelVal(targetLabel, localLabelPrefix));
         tokens.addAll(tentativeTokens);
+        continue;
+      }
+    }
+
+    { // local block
+      if (re.localBlock.firstMatch(val) != null) {
+        localLabelPrefix = prefixGen.next();
         continue;
       }
     }
@@ -493,7 +517,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
           continue;
         }
         String label = match.group(1)!;
-        tentativeTokens.add(Tokens.labelVal(label));
+        tentativeTokens.add(Tokens.makeLabelVal(label, localLabelPrefix));
       } else {
         erroringLines.add(line.error("Invalid argument for jump instruction"));
         continue;
@@ -521,6 +545,13 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
   }
   tokens.addAll(dataTokens);
   return _deduplicateLineStarts(tokens);
+}
+
+class _LocalPrefixGenerator {
+  int _id = 0;
+  String next() {
+    return "\$${_id++}|";
+  }
 }
 
 void printTokens(List<Token> tokens) {
