@@ -17,7 +17,6 @@
  */
 
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import '../msp430_dart.dart';
@@ -51,9 +50,18 @@ argAbs          - absolute
 
  */
 
+class LineId extends Pair<int, String> {
+  const LineId(super.first, super.second);
+
+  @override
+  String toString() {
+    return second.isEmpty ? "$first" : "$first ($second)";
+  }
+}
+
 
 class Line {
-  final int num;
+  final LineId num;
   final String contents;
   Line(this.num, this.contents);
 
@@ -64,7 +72,7 @@ class Line {
 
 
 enum Tokens<T> {
-  lineStart<int>(0),
+  lineStart<LineId>(LineId(0, "")),
   label<String>(""),
   mnemonic<String>(""),
   modeInd<bool>(false),
@@ -147,11 +155,11 @@ class Token<T> {
 }
 
 
-List<Line> parseLines(String txt) {
+List<Line> parseLines(String txt, [String fileName = ""]) {
   List<String> strings = txt.split("\n");
   List<Line> lines = [];
   for (int i = 0; i < strings.length; i++) {
-    lines.add(Line(i, strings[i]));
+    lines.add(Line(LineId(i, fileName), strings[i]));
   }
   return lines;
 }
@@ -568,9 +576,9 @@ void printTokenizerErrors(List<Pair<Line, String>> erroringLines) {
   }
 }
 
-void printInstructionParserErrors(List<Pair<int, String>> erroringLines) {
+void printInstructionParserErrors(List<Pair<LineId, String>> erroringLines) {
   print("${Fore.RED}Instruction Parser Errors:${Style.RESET_ALL}");
-  for (Pair<int, String> erroringLine in erroringLines) {
+  for (Pair<LineId, String> erroringLine in erroringLines) {
     print("${Back.RED}  [${erroringLine.first}]: ${erroringLine.second}${Style.RESET_ALL}");
   }
 }
@@ -624,7 +632,6 @@ class LabelOrValue {
     } else {
       throw "Label '$label' not found";
     }
-    throw AssertionError();
   }
 }
 
@@ -857,7 +864,7 @@ class OperandAbsolute extends Operand {
 
 
 abstract class Instruction {
-  int lineNo;
+  LineId lineNo;
   List<String> labels;
   String mnemonic;
   InstrInfo info;
@@ -868,7 +875,7 @@ abstract class Instruction {
 
 class PaddingInstruction extends Instruction {
   final int words;
-  PaddingInstruction(int lineNo, List<String> labels, this.words) : super(0, 'padding', labels, nullInfo);
+  PaddingInstruction(LineId lineNo, List<String> labels, this.words) : super(LineId(0, lineNo.second), 'padding', labels, nullInfo);
 
   @override
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
@@ -977,7 +984,7 @@ class DoubleOperandInstruction extends Instruction {
 }
 
 class RetiInstruction extends Instruction {
-  RetiInstruction(int lineNo, List<String> labels, InstrInfo info) : super(lineNo, "reti", labels, info);
+  RetiInstruction(LineId lineNo, List<String> labels, InstrInfo info) : super(lineNo, "reti", labels, info);
 
   @override
   String toString() => "RetiInstruction $labels";
@@ -992,7 +999,7 @@ class RetiInstruction extends Instruction {
 }
 
 abstract class DataInstruction extends Instruction {
-  DataInstruction(int lineNo, List<String> labels) : super(lineNo, "data", labels, nullInfo);
+  DataInstruction(LineId lineNo, List<String> labels) : super(lineNo, "data", labels, nullInfo);
 }
 
 // Null byte-terminated C-style string (8 bit chars)
@@ -1042,7 +1049,7 @@ class CString8DataInstruction extends DataInstruction {
 class InterruptInstruction extends DataInstruction {
   int vector;
   LabelOrValue value;
-  InterruptInstruction(int lineNo, this.vector, this.value) : super(lineNo, []);
+  InterruptInstruction(LineId lineNo, this.vector, this.value) : super(lineNo, []);
 
   @override
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
@@ -1263,9 +1270,9 @@ Operand? parseOperandFromStream(Token nextArg, TokenStream t, Function(String, T
 
 
 // This should be implemented somewhat like a state machine (described in parse_fsm.xcf)
-List<Instruction> parseInstructions(List<Token> tokens, List<Pair<int, String>> erroringLines) {
+List<Instruction> parseInstructions(List<Token> tokens, List<Pair<LineId, String>> erroringLines, [String fileName = ""]) {
   TokenStream t = TokenStream(tokens);
-  int line = 0;
+  LineId line = LineId(0, fileName);
   List<Instruction> instructions = [];
   List<String> labels = [];
   bool dataMode = false;
@@ -1542,8 +1549,8 @@ void printInstructions(List<Instruction> instructions) {
 }
 
 
-Pair<Map<int, int>, Map<String, int>> calculateAddresses(int pcStart, List<Instruction> instructions) {
-  Map<int, int> lineToAddress = {};
+Pair<Map<LineId, int>, Map<String, int>> calculateAddresses(int pcStart, List<Instruction> instructions) {
+  Map<LineId, int> lineToAddress = {};
   Map<String, int> lblToAddress = {};
 
   int pc = pcStart;
@@ -1573,9 +1580,9 @@ Uint8List compile(
     int pcStart,
     List<Instruction> instructions,
     Map<String, int> labelAddresses,
-    {void Function(Map<int, String>)? errorConsumer}
+    {void Function(Map<LineId, String>)? errorConsumer}
     ) {
-  Map<int, String> errors = {};
+  Map<LineId, String> errors = {};
   List<BinarySegment> segments = [];
   List<BinarySegment> postFixSegments = [];
   BinarySegment currentSegment = BinarySegment(start: pcStart, contents: []);
@@ -1634,7 +1641,7 @@ Uint8List compile(
 }
 
 
-Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<int, String>)? errorConsumer}) {
+Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<LineId, String>)? errorConsumer}) {
   initInstructionInfo();
   List<Line> lines = parseLines(txt);
 
@@ -1649,7 +1656,7 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
     printTokens(tokens);
   }
 
-  List<Pair<int, String>> instructionParserErrors = [];
+  List<Pair<LineId, String>> instructionParserErrors = [];
   List<Instruction> instructions = parseInstructions(tokens, instructionParserErrors);
 
   if (!silent) {
@@ -1657,15 +1664,15 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
     printInstructions(instructions);
   }
 
-  Pair<Map<int, int>, Map<String, int>> addressMaps = calculateAddresses(codeStart, instructions); // <{line:addr}, {lbl:addr}>
+  Pair<Map<LineId, int>, Map<String, int>> addressMaps = calculateAddresses(codeStart, instructions); // <{line:addr}, {lbl:addr}>
 
   Map<String, int> labelAddresses = addressMaps.second;
 
-  Map<int, String> errors = {};
+  Map<LineId, String> errors = {};
   for (Pair<Line, String> erroringLine in erroringLines) { // tokenizer errors
     errors[erroringLine.first.num] = erroringLine.second;
   }
-  for (Pair<int, String> erroringLine in instructionParserErrors) { // instruction parser errors
+  for (Pair<LineId, String> erroringLine in instructionParserErrors) { // instruction parser errors
     if (!errors.containsKey(erroringLine.first)) {
       errors[erroringLine.first] = erroringLine.second;
     }
