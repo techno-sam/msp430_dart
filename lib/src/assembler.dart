@@ -156,8 +156,14 @@ class Token<T> {
   bool get isLblVal => token.isLblVal;
 }
 
+String filePathToDirectory(String filePath) {
+  List<String> split = filePath.split(Platform.pathSeparator);
+  split.removeLast();
+  return split.join(Platform.pathSeparator);
+}
 
-List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIncludes, int? includedByLine}) {
+List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIncludes, int? includedByLine, Directory? containingDirectory}) {
+  containingDirectory ??= Directory.current;
   List<String> strings = txt.split("\n");
   List<Line> lines = [];
   for (int i = 0; i < strings.length; i++) {
@@ -165,7 +171,8 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
     RegExpMatch? match = re.include.firstMatch(line.trim());
     String? includePath;
     if (match != null && (includePath = match.namedGroup("path")) != null) {
-      File file = File(includePath!);
+      File file = File(containingDirectory.absolute.uri.resolve(includePath!).path);
+      Directory subContainingDirectory = Directory.fromUri(containingDirectory.uri.resolve(filePathToDirectory(includePath)));
       if (file.existsSync()) {
         lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
         String fileContents = file.readAsStringSync();
@@ -174,11 +181,11 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
           // ignore (don't recursively include files)
         } else {
           blockedIncludes.add(includePath);
-          lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes, includedByLine: includedByLine ?? i));
+          lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes, includedByLine: includedByLine ?? i, containingDirectory: subContainingDirectory));
         }
         lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
       } else {
-        lines.add(Line(LineId.included(i, fileName, includedByLine), "!!!File '$includePath not found'"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), "!!!File '$includePath' not found"));
       }
     } else {
       lines.add(Line(LineId.included(i, fileName, includedByLine), line));
@@ -1670,9 +1677,9 @@ Uint8List compile(
 }
 
 
-Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<LineId, String>)? errorConsumer}) {
+Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<LineId, String>)? errorConsumer, Directory? containingDirectory}) {
   initInstructionInfo();
-  List<Line> lines = parseLines(txt);
+  List<Line> lines = parseLines(txt, containingDirectory: containingDirectory);
 
   List<Pair<Line, String>> erroringLines = [];
 

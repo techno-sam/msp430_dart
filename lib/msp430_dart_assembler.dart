@@ -28,7 +28,7 @@ export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled,
   SingleOperandInstruction, DoubleOperandInstruction, CString8DataInstruction,
   InterruptInstruction, initInstructionInfo, Operand, OperandAbsolute,
   OperandImmediate, OperandIndexed, OperandRegisterDirect,
-  OperandRegisterIndirect, OperandSymbolic;
+  OperandRegisterIndirect, OperandSymbolic, LineId, filePathToDirectory;
 export 'src/emulator.dart' show Register, Computer, ExecutionError;
 
 import 'src/regexes.dart';
