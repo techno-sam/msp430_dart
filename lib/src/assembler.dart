@@ -155,13 +155,40 @@ class Token<T> {
 }
 
 
-List<Line> parseLines(String txt, [String fileName = ""]) {
+List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIncludes}) {
   List<String> strings = txt.split("\n");
   List<Line> lines = [];
   for (int i = 0; i < strings.length; i++) {
-    lines.add(Line(LineId(i, fileName), strings[i]));
+    String line = strings[i];
+    RegExpMatch? match = re.include.firstMatch(line.trim());
+    String? includePath;
+    if (match != null && (includePath = match.namedGroup("path")) != null) {
+      File file = File(includePath!);
+      if (file.existsSync()) {
+        lines.add(Line(LineId(i, fileName), ".locblk"));
+        String fileContents = file.readAsStringSync();
+        blockedIncludes ??= [];
+        if (blockedIncludes.contains(includePath)) {
+          // ignore (don't recursively include files)
+        } else {
+          blockedIncludes.add(includePath);
+          lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes));
+        }
+        lines.add(Line(LineId(i, fileName), ".locblk"));
+      } else {
+        lines.add(Line(LineId(i, fileName), "!!!File '$includePath not found'"));
+      }
+    } else {
+      lines.add(Line(LineId(i, fileName), line));
+    }
   }
   return lines;
+}
+
+List<Line> parseIncludeErrors(List<Line> lines, List<Pair<Line, String>> erroringLines) {
+  lines.where((line) => line.contents.startsWith("!!!"))
+      .forEach((line) => erroringLines.add(Pair(line, line.contents.replaceFirst("!!!", ""))));
+  return lines.where((line) => !line.contents.startsWith("!!!")).toList();
 }
 
 List<Line> parseDefines(List<Line> lines, List<Pair<Line, String>> erroringLines) {
@@ -1647,6 +1674,7 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
 
   List<Pair<Line, String>> erroringLines = [];
 
+  lines = parseIncludeErrors(lines, erroringLines);
   lines = parseDefines(lines, erroringLines);
 
   List<Token> tokens = parseTokens(lines, erroringLines);
