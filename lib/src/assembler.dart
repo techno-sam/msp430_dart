@@ -51,7 +51,9 @@ argAbs          - absolute
  */
 
 class LineId extends Pair<int, String> {
-  const LineId(super.first, super.second);
+  final int? includedByLine;
+  const LineId(super.first, super.second): includedByLine = null;
+  const LineId.included(super.first, super.second, this.includedByLine);
 
   @override
   String toString() {
@@ -155,7 +157,7 @@ class Token<T> {
 }
 
 
-List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIncludes}) {
+List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIncludes, int? includedByLine}) {
   List<String> strings = txt.split("\n");
   List<Line> lines = [];
   for (int i = 0; i < strings.length; i++) {
@@ -165,21 +167,21 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
     if (match != null && (includePath = match.namedGroup("path")) != null) {
       File file = File(includePath!);
       if (file.existsSync()) {
-        lines.add(Line(LineId(i, fileName), ".locblk"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
         String fileContents = file.readAsStringSync();
         blockedIncludes ??= [];
         if (blockedIncludes.contains(includePath)) {
           // ignore (don't recursively include files)
         } else {
           blockedIncludes.add(includePath);
-          lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes));
+          lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes, includedByLine: includedByLine ?? i));
         }
-        lines.add(Line(LineId(i, fileName), ".locblk"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
       } else {
-        lines.add(Line(LineId(i, fileName), "!!!File '$includePath not found'"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), "!!!File '$includePath not found'"));
       }
     } else {
-      lines.add(Line(LineId(i, fileName), line));
+      lines.add(Line(LineId.included(i, fileName, includedByLine), line));
     }
   }
   return lines;
