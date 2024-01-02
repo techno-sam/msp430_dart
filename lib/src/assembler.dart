@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023-2023  Sam Wagenaar
+ *     Copyright (C) 2023-2024  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -1004,8 +1004,8 @@ class DoubleOperandInstruction extends Instruction {
   @override
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
     int out = int.parse(info.opCode, radix: 2) << 12;
-    src.pc = pc; // fixme operators need access to label map
-    dst.pc = pc;
+    src.pc = pc;
+    dst.pc = pc + (src.hasExtensionWord ? 2 : 0);
     src.labelAddressMap = labelAddresses;
     dst.labelAddressMap = labelAddresses;
     out |= src.src << 8;
