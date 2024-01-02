@@ -1004,8 +1004,8 @@ class DoubleOperandInstruction extends Instruction {
   @override
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
     int out = int.parse(info.opCode, radix: 2) << 12;
-    src.pc = pc;
-    dst.pc = pc + (src.hasExtensionWord ? 2 : 0);
+    src.pc = pc + 2;
+    dst.pc = pc + (src.hasExtensionWord ? 4 : 2);
     src.labelAddressMap = labelAddresses;
     dst.labelAddressMap = labelAddresses;
     out |= src.src << 8;
