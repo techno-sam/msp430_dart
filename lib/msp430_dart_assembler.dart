@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023-2023  Sam Wagenaar
+ *     Copyright (C) 2023-2024  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -28,7 +28,8 @@ export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled,
   SingleOperandInstruction, DoubleOperandInstruction, CString8DataInstruction,
   InterruptInstruction, initInstructionInfo, Operand, OperandAbsolute,
   OperandImmediate, OperandIndexed, OperandRegisterDirect,
-  OperandRegisterIndirect, OperandSymbolic, LineId, filePathToDirectory;
+  OperandRegisterIndirect, OperandSymbolic, LineId, filePathToDirectory,
+  ListingGenerator, ListingEntry;
 export 'src/emulator.dart' show Register, Computer, ExecutionError;
 
 import 'src/regexes.dart';

@@ -89,7 +89,8 @@ enum Tokens<T> {
   argAbs<void>(null),
   dataMode<void>(null),
   cString8Data<String>(""),
-  interrupt<int>(0) // expects a labelVal to follow it
+  interrupt<int>(0), // expects a labelVal to follow it
+  dbgBreak<void>(null),
   ;
   final T _sham;
   const Tokens(this._sham);
@@ -175,6 +176,7 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
       Directory subContainingDirectory = Directory.fromUri(containingDirectory.uri.resolve(filePathToDirectory(includePath)));
       if (file.existsSync()) {
         lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), ".dbgbrk"));
         String fileContents = file.readAsStringSync();
         blockedIncludes ??= [];
         if (blockedIncludes.contains(includePath)) {
@@ -183,6 +185,7 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
           blockedIncludes.add(includePath);
           lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes, includedByLine: includedByLine ?? i, containingDirectory: subContainingDirectory));
         }
+        lines.add(Line(LineId.included(i, fileName, includedByLine), ".dbgbrk"));
         lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
       } else {
         lines.add(Line(LineId.included(i, fileName, includedByLine), "!!!File '$includePath' not found"));
@@ -389,7 +392,7 @@ List<Token> _deduplicateLineStarts(List<Token> tokens) {
 
 List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines) {
   List<Token> tokens = [];
-  List<Token> dataTokens = [Tokens.dataMode()];
+  List<Token> dataTokens = [Tokens.dbgBreak(), Tokens.dataMode()];
   _LocalPrefixGenerator prefixGen = _LocalPrefixGenerator();
   String localLabelPrefix = prefixGen.next();
   bool dataMode = false;
@@ -402,6 +405,13 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
       val = val.split(";")[0].trimRight();
     }
     if (val == "") {
+      tokens.addAll(tentativeTokens);
+      continue;
+    }
+
+    // check for debugging helpers
+    if (re.dbgBreak.firstMatch(val) != null) {
+      tentativeTokens.add(Tokens.dbgBreak());
       tokens.addAll(tentativeTokens);
       continue;
     }
@@ -1318,6 +1328,8 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<LineId, String
       line = token.value;
     } else if (token.token == Tokens.label) {
       labels.add(token.value);
+    } else if (token.token == Tokens.dbgBreak) {
+      instructions.add(PaddingInstruction(line, [], 0));
     } else if (token.token == Tokens.interrupt) {
       labels = [];
       int vector = token.value;
@@ -1611,12 +1623,119 @@ class BinarySegment {
   BinarySegment({required this.start, required this.contents});
 }
 
+class ListingEntry {
+  final int pc;
+  final LineId line;
+  final String original;
+  final List<String> labels;
+  final List<int> words;
+
+  ListingEntry({required this.pc, required this.line, required this.original, required this.labels, required this.words});
+
+  String get _paddedWords {
+    List<String> out = [];
+    for (int i = 0; i < 3; i++) {
+      if (i < words.length) {
+        out.add(words[i].hexString4);
+      } else {
+        out.add(" "*4);
+      }
+    }
+    return out.join(" ");
+  }
+
+  String output() {
+    return "0x${pc.hexString4}\t$_paddedWords\t${original.padRight(20)}${labels.isEmpty ? "" : "\t$labels"}";
+  }
+}
+
+class ListingGenerator {
+  final List<ListingEntry> entries = [];
+  final List<int> _pcBreaks = [];
+  final Map<LineId, String> _lines;
+
+  ListingGenerator({required List<Line> lines}) : _lines = lines.lineMap;
+
+  void addInstruction(Instruction instr, Map<String, int> labelAddresses, int pc) {
+    ListingEntry entry = ListingEntry(
+        pc: pc,
+        line: instr.lineNo,
+        original: _lines[instr.lineNo] ?? "{LINE CONTENTS NOT FOUND}",
+        labels: instr.labels,
+        words: instr.compiled(labelAddresses, pc).toList(growable: false)
+    );
+    entries.add(entry);
+  }
+
+  void breakAt(int pc) {
+    _pcBreaks.add(pc);
+  }
+
+  String output() {
+    entries.sort((a, b) => a.pc.compareTo(b.pc));
+    _pcBreaks.sort();
+    List<String> out = [];
+
+    // label section
+    out.add("------------|Labels|------------");
+
+    List<String> labels = [];
+    Map<String, int> labelAddresses = {};
+    for (ListingEntry entry in entries) {
+      for (String label in entry.labels) {
+        if (!labels.contains(label)) {
+          labels.add(label);
+          labelAddresses[label] = entry.pc;
+        }
+      }
+    }
+    labels.sort();
+    for (String label in labels) {
+      out.add("${label.padRight(20)}\t0x${labelAddresses[label]!.hexString4}");
+    }
+
+    // code section
+    out.add("\n-------------|Code|-------------");
+
+    int breakIdx = 0;
+    int nextBreak = _pcBreaks.isEmpty ? -2 : _pcBreaks[breakIdx];
+    for (ListingEntry entry in entries) {
+      if (entry.pc == nextBreak) {
+        out.add("");
+        breakIdx += 1;
+        if (breakIdx >= _pcBreaks.length) {
+          nextBreak = -2;
+        } else {
+          nextBreak = _pcBreaks[breakIdx];
+        }
+      }
+      out.add(entry.output());
+    }
+
+    // line map section
+    out.add("\n-----------|Line Map|-----------");
+    // (line, (pc, (word...)))
+    List<Pair<int, Pair<int, List<int>>>> lineMap = [];
+    for (ListingEntry entry in entries) {
+      if (entry.line.second == "") {
+        lineMap.add(Pair(entry.line.first, Pair(entry.pc, entry.words)));
+      }
+    }
+    lineMap.sort((a, b) => a.first.compareTo(b.first));
+    for (Pair<int, Pair<int, List<int>>> entry in lineMap) {
+      out.add("${entry.first}\t0x${entry.second.first.hexString4}\t${entry.second.second.map((int word) => word.hexString4).join(" ")}");
+    }
+
+    return "${out.join("\n")}\n";
+  }
+}
+
 
 Uint8List compile(
     int pcStart,
     List<Instruction> instructions,
     Map<String, int> labelAddresses,
-    {void Function(Map<LineId, String>)? errorConsumer}
+    {void Function(Map<LineId, String>)? errorConsumer, ListingGenerator? listing}
     ) {
   Map<LineId, String> errors = {};
   List<BinarySegment> segments = [];
@@ -1628,12 +1747,14 @@ Uint8List compile(
       if (currentSegment.contents.isNotEmpty) {
         segments.add(currentSegment);
       }
+      listing?.breakAt(pc);
       pc += instruction.numWords * 2;
       currentSegment = BinarySegment(start: pc, contents: []);
     } else if (instruction is InterruptInstruction) {
       postFixSegments.add(BinarySegment(start: instruction.vector, contents: [instruction.value.get(labelAddresses)]));
     } else {
       try {
+        listing?.addInstruction(instruction, labelAddresses, pc);
         currentSegment.contents.addAll(instruction.compiled(labelAddresses, pc));
       } catch (e) {
         var errorDescription = e is UnimplementedError ? e.message : e;
@@ -1677,7 +1798,7 @@ Uint8List compile(
 }
 
 
-Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<LineId, String>)? errorConsumer, Directory? containingDirectory}) {
+Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void Function(Map<LineId, String>)? errorConsumer, Directory? containingDirectory, MutableObject<ListingGenerator>? listingGen}) {
   initInstructionInfo();
   List<Line> lines = parseLines(txt, containingDirectory: containingDirectory);
 
@@ -1685,6 +1806,10 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
 
   lines = parseIncludeErrors(lines, erroringLines);
   lines = parseDefines(lines, erroringLines);
+
+  if (listingGen != null) {
+    listingGen.set(ListingGenerator(lines: lines));
+  }
 
   List<Token> tokens = parseTokens(lines, erroringLines);
 
@@ -1723,7 +1848,7 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
     if (errors.isNotEmpty) {
       throw "Errors found, can't compile";
     }
-    return compile(codeStart, instructions, labelAddresses, errorConsumer: errorConsumer);
+    return compile(codeStart, instructions, labelAddresses, errorConsumer: errorConsumer, listing: listingGen?.get());
   } catch (e) {
     return null;
   }

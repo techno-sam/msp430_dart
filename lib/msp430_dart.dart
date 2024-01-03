@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023  Sam Wagenaar
+ *     Copyright (C) 2023-2024  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -21,7 +21,8 @@ library msp430_dart;
 
 export 'src/basic_datatypes.dart';
 export 'src/colors.dart' show Fore, Back, Style;
-export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled, LineId, filePathToDirectory;
+export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled,
+  LineId, filePathToDirectory, ListingGenerator, ListingEntry;
 export 'src/emulator.dart' show Register, Computer, ExecutionError;
 
 import 'src/regexes.dart';

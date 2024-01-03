@@ -1,6 +1,6 @@
 /*
  *     MSP430 emulator and assembler
- *     Copyright (C) 2023-2023  Sam Wagenaar
+ *     Copyright (C) 2023-2024  Sam Wagenaar
  *
  *     This program is free software: you can redistribute it and/or modify
  *     it under the terms of the GNU General Public License as published by
@@ -48,4 +48,5 @@ class Regex {
   RegExp interrupt = RegExp(r"^\.interrupt (?:(?:0[xX](?<vector_hex>[0-9a-fA-F]{1,4}))|(?<vector_digits>\d+)) (?<target_label>[A-z$_][A-z0-9$_]*)$");
   RegExp localBlock = RegExp(r"^\.locblk$");
   RegExp include = RegExp(r'^.include <(?<path>[^<>;]*)>');
+  RegExp dbgBreak = RegExp(r'^\.dbgbrk$'); // visual newline in debug listing
 }
