@@ -692,10 +692,15 @@ abstract class Operand {
   int get dst;
 
   int? _pc;
+  bool? _bw;
   Map<String, int>? _labelAddressMap;
 
   set pc(int? pc) {
     _pc = pc;
+  }
+
+  set bw(bool? bw) {
+    _bw = bw;
   }
 
   set labelAddressMap(Map<String, int>? labelAddressMap) {
@@ -861,7 +866,11 @@ class OperandImmediate extends Operand {
   bool get hasExtensionWord => !_extensionWordSkippable;
 
   @override
-  int? get extensionWord => _extensionWordSkippable ? null : val.get(_labelAddressMap!);
+  int? get extensionWord {
+    if (_extensionWordSkippable) return null;
+    var ext = val.get(_labelAddressMap!);
+    return _bw! ? (ext << 8) & 0xff00 : ext; // workaround for the fact that our emulator uses HILO words, rather than LOHI words like the MSP does
+  }
 
   @override
   int get as => _extensionWordSkippable ? specialImmediates[val.value]!.first : 3; // 0b11 actually register autoincrement
@@ -988,7 +997,8 @@ class SingleOperandInstruction extends Instruction {
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
     int out = 0x1000; // 0b0001_0000_0000_0000
     int opcode = int.parse(info.opCode, radix: 2);
-    op1.pc = pc; // fixme operators need access to label map
+    op1.pc = pc;
+    op1.bw = bw;
     op1.labelAddressMap = labelAddresses;
     out |= opcode << 7;
     out |= bw.int << 6;
@@ -1015,7 +1025,9 @@ class DoubleOperandInstruction extends Instruction {
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
     int out = int.parse(info.opCode, radix: 2) << 12;
     src.pc = pc + 2;
+    src.bw = bw;
     dst.pc = pc + (src.hasExtensionWord ? 4 : 2);
+    dst.bw = bw;
     src.labelAddressMap = labelAddresses;
     dst.labelAddressMap = labelAddresses;
     out |= src.src << 8;
