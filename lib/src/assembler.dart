@@ -1632,7 +1632,7 @@ class ListingEntry {
 
   ListingEntry({required this.pc, required this.line, required this.original, required this.labels, required this.words});
 
-  String get _paddedWords {
+  String get paddedWords {
     List<String> out = [];
     for (int i = 0; i < 3; i++) {
       if (i < words.length) {
@@ -1645,7 +1645,7 @@ class ListingEntry {
   }
 
   String output() {
-    return "0x${pc.hexString4}\t$_paddedWords\t${original.padRight(20)}${labels.isEmpty ? "" : "\t$labels"}";
+    return "0x${pc.hexString4}\t$paddedWords\t${original.padRight(20)}${labels.isEmpty ? "" : "\t$labels"}";
   }
 }
 
