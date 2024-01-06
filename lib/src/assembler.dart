@@ -630,27 +630,8 @@ void printInstructionParserErrors(List<Pair<LineId, String>> erroringLines) {
 }
 
 
-class TokenStream {
-  late final List<Token> _tokens;
-  TokenStream(List<Token> tokens) {
-    _tokens = tokens.toList();
-  }
-
-  Token peek() {
-    return _tokens[0];
-  }
-
-  Token peekAhead(int idx) {
-    return _tokens[idx];
-  }
-
-  Token pop() {
-    return _tokens.removeAt(0);
-  }
-
-  bool get isEmpty => _tokens.isEmpty;
-
-  bool get isNotEmpty => _tokens.isNotEmpty;
+class TokenStream extends ROStack<Token> {
+  TokenStream(super.values);
 
   void popToNextLine() {
     while (peek().token != Tokens.lineStart) {

@@ -16,8 +16,8 @@
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import 'dart:core' as core;
 import 'dart:core';
+import 'dart:core' as core;
 import 'package:binary/binary.dart';
 import 'package:msp430_dart/src/assembler.dart';
 
@@ -154,6 +154,133 @@ extension IntRepresentations on int {
     String out = "";
     for (int i = 0; i < str.length; i++) {
       out = (i % 3 == 2 && i < str.length-1 ? ',' : '') + str[str.length - i - 1] + out;
+    }
+    return out;
+  }
+}
+
+class ROStack<T> {
+  late final List<T> _values;
+  ROStack(List<T> values) {
+    _values = values.toList();
+  }
+
+  T peek() {
+    return _values[0];
+  }
+
+  T peekAhead(int idx) {
+    return _values[idx];
+  }
+
+  T pop() {
+    return _values.removeAt(0);
+  }
+
+  bool get isEmpty => _values.isEmpty;
+
+  bool get isNotEmpty => _values.isNotEmpty;
+}
+
+extension Streamify<T> on List<T> {
+  ROStack<T> get readonlyStream => ROStack(this);
+}
+
+extension Regify on List<String> {
+  List<RegExp> get asRegex => map((e) => RegExp(e)).toList();
+}
+
+abstract class _Piece {
+  String get(RegExpMatch match);
+}
+
+class _StringPiece implements _Piece {
+  final String value;
+  const _StringPiece(this.value);
+
+  @override
+  String get(RegExpMatch match) => value;
+
+  @override
+  String toString() {
+    return "_StringPiece[$value]";
+  }
+}
+
+class _NumericPiece implements _Piece {
+  final int group;
+  const _NumericPiece(this.group);
+
+  @override
+  String get(RegExpMatch match) => match.group(group) ?? "";
+
+  @override
+  String toString() {
+    return "_NumericPiece[$group]";
+  }
+}
+
+class _NamedPiece implements _Piece {
+  final String group;
+  const _NamedPiece(this.group);
+
+  @override
+  String get(RegExpMatch match) => match.namedGroup(group) ?? "";
+
+  @override
+  String toString() {
+    return "_NamedPiece[$group]";
+  }
+}
+
+class RegexSubstitution {
+  final RegExp _pattern;
+  final String _target;
+  final List<_Piece> _pieces = [];
+
+  /// Target syntax: `$#` to match numbered group `#`, `$<name>` to match named group `name`
+  RegexSubstitution(String pattern, String target): _pattern = RegExp(pattern), _target = target {
+    ROStack<String> stack = _target.split("").readonlyStream;
+    String parts = "";
+    while (stack.isNotEmpty) {
+      String char = stack.pop();
+      if (char == r"$") {
+        if (parts.isNotEmpty) {
+          _pieces.add(_StringPiece(parts));
+          parts = "";
+        }
+        String next = stack.pop();
+        if (next == "<") { // named
+          while (stack.isNotEmpty && stack.peek() != ">") {
+            parts += stack.pop();
+          }
+          stack.pop(); // pop '>'
+          _pieces.add(_NamedPiece(parts));
+        } else if (int.tryParse(next) != null) { // digit
+          parts += next;
+          while (stack.isNotEmpty && int.tryParse(stack.peek()) != null) {
+            parts += stack.pop();
+          }
+          _pieces.add(_NumericPiece(int.parse(parts)));
+        }
+        parts = "";
+      } else {
+        parts += char;
+      }
+    }
+    if (parts.isNotEmpty) {
+      _pieces.add(_StringPiece(parts));
+    }
+    //print("[$_pattern] $_pieces");
+  }
+
+  String? apply(String input) {
+    RegExpMatch? match = _pattern.firstMatch(input);
+    if (match == null) return null;
+
+    String out = "";
+    for (_Piece piece in _pieces) {
+      out += piece.get(match);
     }
     return out;
   }

@@ -31,6 +31,7 @@ export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled,
   OperandRegisterIndirect, OperandSymbolic, LineId, filePathToDirectory,
   ListingGenerator, ListingEntry;
 export 'src/emulator.dart' show Register, Computer, ExecutionError;
+export 'src/disassembler.dart' show Disassembler;
 
 import 'src/regexes.dart';
 Regex re = Regex();

@@ -16,15 +16,8 @@
  *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/// Note: the emulator is no longer supported, go use the rust implementation instead (https://github.com/techno-sam/msp430_rust)
-library msp430_dart;
+import 'package:msp430_dart/src/disassembler.dart' show testDisassembler;
 
-export 'src/basic_datatypes.dart';
-export 'src/colors.dart' show Fore, Back, Style;
-export 'src/assembler.dart' show parse, writeCompiledByName, writeCompiled,
-  LineId, filePathToDirectory, ListingGenerator, ListingEntry;
-export 'src/emulator.dart' show Register, Computer, ExecutionError;
-export 'src/disassembler.dart' show Disassembler;
-
-import 'src/regexes.dart';
-Regex re = Regex();
+void main() {
+  testDisassembler();
+}
