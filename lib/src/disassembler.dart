@@ -44,10 +44,13 @@ String _repr(int value, Map<int, String> labels, [bool signed = false]) {
 
 class OperandImmediate implements Operand {
   final int value;
-  const OperandImmediate(this.value);
+  final bool _specialCase;
+  const OperandImmediate(this.value): _specialCase = false;
 
   @override
-  String repr(Map<int, String> labels, bool bw) => "#${_repr(bw ? value >> 8 : value, labels, true)}";
+  String repr(Map<int, String> labels, bool bw) => "#${_repr(bw && !_specialCase ? value >> 8 : value, labels, true)}";
+
+  OperandImmediate.specialCase(this.value): _specialCase = true;
 }
 
 class OperandRegisterDirect implements Operand {
@@ -226,7 +229,7 @@ class Disassembler {
       } else {
         throw "Unreachable";
       }
-      return OperandImmediate(value);
+      return OperandImmediate.specialCase(value);
     }
 
     if (as == 0) { // Register Mode
@@ -364,7 +367,9 @@ void testDisassembler() {
 
     0x503d, 0xfb00,
 
-    0x4ccd, 0x0000
+    0x4ccd, 0x0000,
+
+    0x4355 // mov.b #1 r5
   ], 0x4400, {
     0x4414: "test"
   });
