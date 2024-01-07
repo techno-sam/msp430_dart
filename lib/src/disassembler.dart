@@ -148,15 +148,15 @@ List<RegexSubstitution> _makeRegexSubstitutions() {
     }
     emulated = emulated.toLowerCase();
     String target = emulated.split("\t")[0] // ADC.x dst
+      .replaceAll("+", r"\+")
       .replaceFirst(".x", r"$<bw>")
-      .replaceFirst("dst", r"$<dst>")
-      .replaceAll("+", r"\+");
+      .replaceFirst("dst", r"$<dst>");
     String source = emulated.split("\t")[1] // ADDC.x #0 dst
-      .replaceFirst(".x", r"(?<bw>\.b|w)?")
-      .replaceFirst("dst", r"(?<dst>.+)")
       .replaceFirst(",", " ")
       .replaceAll("+", r"\+")
-      .replaceFirst("#", "#0x0");
+      .replaceFirst("#", "#0x0")
+      .replaceFirst(".x", r"(?<bw>\.b|w)?")
+      .replaceFirst("dst", r"(?<dst>.+)");
 
     cleanupRegex.add(RegexSubstitution(source, target));
   }
@@ -193,7 +193,7 @@ class Disassembler {
         }
       }
       out.sort((a, b) => a.length.compareTo(b.length));
-      //print(out);
+      print(out);
       return Pair(data.first, out[0]);
     });
   }
@@ -369,7 +369,8 @@ void testDisassembler() {
 
     0x4ccd, 0x0000,
 
-    0x4355 // mov.b #1 r5
+    0x4355, // mov.b #1 r5
+    0x413e, // pop r14
   ], 0x4400, {
     0x4414: "test"
   });
