@@ -978,7 +978,7 @@ class SingleOperandInstruction extends Instruction {
   Iterable<int> compiled(Map<String, int> labelAddresses, int pc) {
     int out = 0x1000; // 0b0001_0000_0000_0000
     int opcode = int.parse(info.opCode, radix: 2);
-    op1.pc = pc;
+    op1.pc = pc + 2;
     op1.bw = bw;
     op1.labelAddressMap = labelAddresses;
     out |= opcode << 7;

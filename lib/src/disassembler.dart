@@ -166,7 +166,7 @@ List<RegexSubstitution> _makeRegexSubstitutions() {
 class Disassembler {
   final WordStream stream;
   final int startAddress;
-  late int _currentAddress = startAddress - 2;
+  late int _currentAddress = startAddress;
   final List<Pair<int, String>> _out = [];
   final Map<int, String> labels;
   Disassembler(List<int> data, this.startAddress, this.labels):
@@ -284,15 +284,15 @@ class Disassembler {
   }
 
   String _labelPrefix() {
-    if (labels.containsKey(_currentAddress)) {
-      String lbl = labels[_currentAddress]!;
+    if (labels.containsKey(_currentAddress-2)) { // account for initial pop
+      String lbl = labels[_currentAddress-2]!;
       return "${lbl.startsWith(r'$') ? '' : '\n'}$lbl:\n";
     }
     return "";
   }
 
   void _processSingleOperand(int instr) {
-    final int addr = _currentAddress;
+    final int addr = _currentAddress - 2; // account for initial pop
     final lbl = _labelPrefix();
     final opcode = (instr >> 7) & 0x7;
     final srcReg = instr & 0xf;
@@ -305,7 +305,7 @@ class Disassembler {
   }
 
   void _processJump(int instr) {
-    final int addr = _currentAddress;
+    final int addr = _currentAddress - 2; // account for initial pop
     final lbl = _labelPrefix();
     int offset = instr & 0x3ff;
     if (offset > 512) {
@@ -316,7 +316,7 @@ class Disassembler {
     final con = _jumpOpcodes[condition];
 
     int targetOffset = (offset * 2) + 2;
-    int targetAddress = _currentAddress + targetOffset;
+    int targetAddress = addr + targetOffset;
     String target;
     if (labels.containsKey(targetAddress)) {
       target = labels[targetAddress]!;
@@ -327,7 +327,7 @@ class Disassembler {
   }
 
   void _processDoubleOperand(int instr) {
-    final int addr = _currentAddress;
+    final int addr = _currentAddress - 2; // account for initial pop
     final lbl = _labelPrefix();
     final opcode = (instr >> 12) & 0xf;
     final srcReg = (instr >> 8) & 0xf;
@@ -351,11 +351,17 @@ class Disassembler {
 
 void testDisassembler() {
   final Disassembler dis = Disassembler([
+    0x4031, 0x4400, // mov #0x4400 sp
+    0x4074, 0x0300, // mov.b #3 r4
+    0x4355, // mov.b #1 r5
+    0x43c0, 0x001c, // mov #0 0x4428
+
     0x4125,
     0x4036, 0x002b,
     0x4035, 0x0036,
-    0x12b0, 0x4414,
-    0x1290, 0x0006,
+
+    0x12b0, 0x4422,
+    0x1290, 0x0004,
     0x3c00,
 
     0x4a0b,
@@ -363,16 +369,19 @@ void testDisassembler() {
 
     0xd222,
 
-    16500, 768,
+    0x3000
+
+    /*16500, 768,
 
     0x503d, 0xfb00,
 
     0x4ccd, 0x0000,
 
     0x4355, // mov.b #1 r5
-    0x413e, // pop r14
+    0x413e, // pop r14*/
   ], 0x4400, {
-    0x4414: "test"
+    0x4422: "test",
+    0x4428: "ball_x"
   });
   final out = dis.run();
   print(out
