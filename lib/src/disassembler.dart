@@ -29,8 +29,14 @@ String _repr(int value, Map<int, String> labels, [bool signed = false]) {
   if (labels.containsKey(value)) {
     return labels[value]!;
   }
+  if (value == 0) {
+    return "0";
+  }
   if (signed) {
-    return "0x${value.u16.s16.value.hexString4}".replaceFirst("0x00", "0x");
+    int val = value.u16.s16.value;
+    String prefix = val < 0 ? "-" : "";
+    val = val.abs();
+    return "${prefix}0x${val.hexString4}".replaceFirst("0x00", "0x");
   } else {
     return "0x${value.hexString4}".replaceFirst("0x00", "0x");
   }
@@ -59,7 +65,7 @@ class OperandIndexed extends OperandRegisterDirect {
   OperandIndexed(super.register, this.offset);
 
   @override
-  String repr(Map<int, String> labels, bool bw) => "0x${_repr(offset, labels, true)}(${super.repr})";
+  String repr(Map<int, String> labels, bool bw) => "${_repr(offset, labels, true)}(${super.repr(labels, bw)})";
 }
 
 class OperandAbsolute implements Operand {
@@ -354,7 +360,11 @@ void testDisassembler() {
 
     0xd222,
 
-    16500, 768
+    16500, 768,
+
+    0x503d, 0xfb00,
+
+    0x4ccd, 0x0000
   ], 0x4400, {
     0x4414: "test"
   });
