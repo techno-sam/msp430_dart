@@ -22,7 +22,7 @@ import 'basic_datatypes.dart';
 typedef WordStream = ROStack<int>;
 
 abstract class Operand {
-  String repr(Map<int, String> labels);
+  String repr(Map<int, String> labels, bool bw);
 }
 
 String _repr(int value, Map<int, String> labels, [bool signed = false]) {
@@ -30,9 +30,9 @@ String _repr(int value, Map<int, String> labels, [bool signed = false]) {
     return labels[value]!;
   }
   if (signed) {
-    return "0x${value.u16.s16.value.hexString4}";
+    return "0x${value.u16.s16.value.hexString4}".replaceFirst("0x00", "0x");
   } else {
-    return "0x${value.hexString4}";
+    return "0x${value.hexString4}".replaceFirst("0x00", "0x");
   }
 }
 
@@ -41,7 +41,7 @@ class OperandImmediate implements Operand {
   const OperandImmediate(this.value);
 
   @override
-  String repr(Map<int, String> labels) => "#${_repr(value, labels, true)}";
+  String repr(Map<int, String> labels, bool bw) => "#${_repr(bw ? value >> 8 : value, labels, true)}";
 }
 
 class OperandRegisterDirect implements Operand {
@@ -51,7 +51,7 @@ class OperandRegisterDirect implements Operand {
   const OperandRegisterDirect(this.register);
 
   @override
-  String repr(Map<int, String> labels) => register < _special.length ? _special[register] : "r$register";
+  String repr(Map<int, String> labels, bool bw) => register < _special.length ? _special[register] : "r$register";
 }
 
 class OperandIndexed extends OperandRegisterDirect {
@@ -59,7 +59,7 @@ class OperandIndexed extends OperandRegisterDirect {
   OperandIndexed(super.register, this.offset);
 
   @override
-  String repr(Map<int, String> labels) => "0x${_repr(offset, labels, true)}(${super.repr})";
+  String repr(Map<int, String> labels, bool bw) => "0x${_repr(offset, labels, true)}(${super.repr})";
 }
 
 class OperandAbsolute implements Operand {
@@ -67,7 +67,7 @@ class OperandAbsolute implements Operand {
   const OperandAbsolute(this.address);
 
   @override
-  String repr(Map<int, String> labels) => "&${_repr(address, labels)}";
+  String repr(Map<int, String> labels, bool bw) => "&${_repr(address, labels)}";
 }
 
 class OperandSymbolic implements Operand {
@@ -75,21 +75,21 @@ class OperandSymbolic implements Operand {
   const OperandSymbolic(this.address);
 
   @override
-  String repr(Map<int, String> labels) => _repr(address, labels);
+  String repr(Map<int, String> labels, bool bw) => _repr(address, labels);
 }
 
 class OperandRegisterIndirect extends OperandRegisterDirect {
   OperandRegisterIndirect(super.register);
 
   @override
-  String repr(Map<int, String> labels) => "@${super.repr(labels)}";
+  String repr(Map<int, String> labels, bool bw) => "@${super.repr(labels, bw)}";
 }
 
 class OperandRegisterIndirectAutoincrement extends OperandRegisterIndirect {
   OperandRegisterIndirectAutoincrement(super.register);
 
   @override
-  String repr(Map<int, String> labels) => "${super.repr(labels)}+";
+  String repr(Map<int, String> labels, bool bw) => "${super.repr(labels, bw)}+";
 }
 
 const List<String> _singleOperandOpcodes = [
@@ -147,7 +147,7 @@ List<RegexSubstitution> _makeRegexSubstitutions() {
       .replaceFirst("dst", r"(?<dst>.+)")
       .replaceFirst(",", " ")
       .replaceAll("+", r"\+")
-      .replaceFirst("#", "#0x000");
+      .replaceFirst("#", "#0x0");
 
     cleanupRegex.add(RegexSubstitution(source, target));
   }
@@ -158,14 +158,14 @@ class Disassembler {
   final WordStream stream;
   final int startAddress;
   late int _currentAddress = startAddress - 2;
-  final List<Pair<int, String>> out = [];
+  final List<Pair<int, String>> _out = [];
   final Map<int, String> labels;
   Disassembler(List<int> data, this.startAddress, this.labels):
         stream = data.readonlyStream;
 
   void _add(int addr, String contents) {
     for (String line in contents.split("\n")) {
-      out.add(Pair(addr, line));
+      _out.add(Pair(addr, line));
     }
   }
 
@@ -174,7 +174,7 @@ class Disassembler {
       _step();
     }
 
-    return out.map((data) {
+    return _out.map((data) {
       String line = data.second;
       List<String> out = [line];
       for (RegexSubstitution cleanup in _cleanupRegex) {
@@ -292,7 +292,7 @@ class Disassembler {
 
     final src = _getSrc(srcReg, as, bw);
     final opc = _singleOperandOpcodes[opcode];
-    _add(addr, "$lbl$opc${bw ? '.b' : ''} ${src.repr(labels)}");
+    _add(addr, "$lbl$opc${bw ? '.b' : ''} ${src.repr(labels, bw)}");
   }
 
   void _processJump(int instr) {
@@ -336,7 +336,7 @@ class Disassembler {
 
     final opc = _doubleOperandOpcodes[opcode - 4];
 
-    _add(addr, "$lbl$opc${bw ? '.b' : ''} ${src.repr(labels)} ${dst.repr(labels)}");
+    _add(addr, "$lbl$opc${bw ? '.b' : ''} ${src.repr(labels, bw)} ${dst.repr(labels, bw)}");
   }
 }
 
@@ -352,7 +352,9 @@ void testDisassembler() {
     0x4a0b,
     0x4130,
 
-    0xd222
+    0xd222,
+
+    16500, 768
   ], 0x4400, {
     0x4414: "test"
   });
