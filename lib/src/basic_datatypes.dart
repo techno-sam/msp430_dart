@@ -271,7 +271,7 @@ class RegexSubstitution {
     if (parts.isNotEmpty) {
       _pieces.add(_StringPiece(parts));
     }
-    print("[$_pattern] $_pieces");
+    //print("[$_pattern] $_pieces");
   }
 
   String? apply(String input) {

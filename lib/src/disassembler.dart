@@ -193,7 +193,7 @@ class Disassembler {
         }
       }
       out.sort((a, b) => a.length.compareTo(b.length));
-      print(out);
+      //print(out);
       return Pair(data.first, out[0]);
     });
   }
