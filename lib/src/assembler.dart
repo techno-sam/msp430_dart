@@ -18,6 +18,7 @@
 
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:collection/collection.dart' show DelegatingList;
 
 import '../msp430_dart.dart';
 
@@ -50,10 +51,56 @@ argAbs          - absolute
 
  */
 
+class CallbackOnAddList<E> extends DelegatingList<E> {
+  void Function(E) onAdd;
+
+  CallbackOnAddList(super.base, this.onAdd);
+
+  @override
+  void add(value) {
+    onAdd(value);
+    super.add(value);
+  }
+}
+
+extension WrapWithAddCallback<E> on List<E> {
+  CallbackOnAddList<E> onAdd(void Function(E) onAdd) {
+    return CallbackOnAddList(this, onAdd);
+  }
+}
+
+NestedTracker _panicOnRecursionLimit = NestedTracker();
+
+class MacroRecursionError extends Error {
+  final Line line;
+
+  MacroRecursionError(this.line);
+
+  @override
+  String toString() {
+    return "Macro recursion limit reached on line: ${line.num}:\t${line.contents}";
+  }
+}
+
 class LineId extends Pair<int, String> {
   final int? includedByLine;
   const LineId(super.first, super.second): includedByLine = null;
   const LineId.included(super.first, super.second, this.includedByLine);
+
+  LineId copyWith({
+    int? lineNo,
+    String? source,
+    int? includedByLine
+  }) {
+    lineNo ??= first;
+    source ??= second;
+    includedByLine ??= this.includedByLine;
+    if (includedByLine != null) {
+      return LineId.included(lineNo, source, includedByLine);
+    } else {
+      return LineId(lineNo, source);
+    }
+  }
 
   @override
   String toString() {
@@ -91,6 +138,7 @@ enum Tokens<T> {
   cString8Data<String>(""),
   interrupt<int>(0), // expects a labelVal to follow it
   dbgBreak<void>(null),
+  listingComment<String>(""),
   ;
   final T _sham;
   const Tokens(this._sham);
@@ -168,14 +216,14 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
   List<String> strings = txt.split("\n");
   List<Line> lines = [];
   for (int i = 0; i < strings.length; i++) {
-    String line = strings[i];
-    RegExpMatch? match = re.include.firstMatch(line.trim());
+    String line = strings[i].trim();
+    RegExpMatch? match = re.include.firstMatch(line);
     String? includePath;
     if (match != null && (includePath = match.namedGroup("path")) != null) {
       File file = File(containingDirectory.absolute.uri.resolve(includePath!).path);
       Directory subContainingDirectory = Directory.fromUri(containingDirectory.uri.resolve(filePathToDirectory(includePath)));
       if (file.existsSync()) {
-        lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), ".push_locblk"));
         lines.add(Line(LineId.included(i, fileName, includedByLine), ".dbgbrk"));
         String fileContents = file.readAsStringSync();
         blockedIncludes ??= [];
@@ -186,7 +234,7 @@ List<Line> parseLines(String txt, {String fileName = "", List<String>? blockedIn
           lines.addAll(parseLines(fileContents, fileName: includePath, blockedIncludes: blockedIncludes, includedByLine: includedByLine ?? i, containingDirectory: subContainingDirectory));
         }
         lines.add(Line(LineId.included(i, fileName, includedByLine), ".dbgbrk"));
-        lines.add(Line(LineId.included(i, fileName, includedByLine), ".locblk"));
+        lines.add(Line(LineId.included(i, fileName, includedByLine), ".pop_locblk"));
       } else {
         lines.add(Line(LineId.included(i, fileName, includedByLine), "!!!File '$includePath' not found"));
       }
@@ -224,6 +272,178 @@ List<Line> parseDefines(List<Line> lines, List<Pair<Line, String>> erroringLines
       contents = contents.replaceAll("[${entry.key}]", entry.value);
     }
     out.add(line.set(contents));
+  }
+  return out;
+}
+
+class Macro {
+  final String name;
+  final List<String> parameters;
+  /// NOTE: not final lines, but rather lines *within* the macro
+  final List<Line> _lines;
+
+  Iterable<Line> realizedLines(List<String> arguments) {
+    return _lines.map((line) {
+      String newContents = line.contents;
+      for (int i = 0; i < parameterCount; i++) {
+        final from = parameters[i];
+        final to = arguments[i];
+        newContents = newContents.replaceAll("{$from}", to);
+      }
+      return line.set(newContents);
+    });
+  }
+
+  int get parameterCount => parameters.length;
+  String get qualifier => "$name|$parameterCount|";
+
+  Macro({required this.name, required this.parameters, required List<Line> lines}): _lines = lines;
+}
+
+class MacroBuilder {
+  String? _name;
+  List<String>? _parameters;
+  int _lineNo = 0;
+  final List<Line> _lines = [];
+
+  set name(String name) => _name = name;
+  set parameters(List<String> parameters) => _parameters = parameters;
+
+  void addLine(Line line) {
+    //print("Adding line to macro $_name: ${line.contents}");
+    _lines.add(Line(line.num.copyWith(source: "${line.num.second.isEmpty ? "" : "${line.num.second}: "}<PLACEHOLDER>:${++_lineNo}"), line.contents));
+  }
+
+  List<Line> _processLines() {
+    return _lines.map((line) => Line(
+        line.num.copyWith(source: line.num.second.replaceFirst("<PLACEHOLDER>", _name!)),
+        line.contents
+    )).toList(growable: false);
+  }
+
+  Macro? build() {
+    if (_name == null || _parameters == null) {
+      return null;
+    }
+    return Macro(
+      name: _name!,
+      parameters: _parameters!,
+      lines: _processLines()
+    );
+  }
+}
+
+/*
+; definition
+.macro test_macro(a, beta, t3st)
+mov {a} r6
+add {beta} 0({t3st})
+mov @{t3st} {a}
+.endmacro
+
+; invocation
+test_macro(r5, #0x4201, r7)
+ */
+List<Line> parseMacros(List<Line> lines, List<Pair<Line, String>> erroringLines) {
+  final Map<String, Macro> macros = {};
+
+  List<Line> remainingLines = [];
+  // load macros
+  final NestedTracker tracker = NestedTracker();
+  MacroBuilder? builder;
+  Line? outerMacroStart;
+  for (Line line in lines) {
+    // .macro
+    RegExpMatch? match = re.macro.firstMatch(line.contents.trimComments());
+    if (match != null) {
+      if (tracker.enter()) {
+        erroringLines.add(Pair(line, "nested macros are not supported"));
+      } else {
+        builder = MacroBuilder();
+        builder.name = match.namedGroup("name")!;
+        String params = match.namedGroup("args")!;
+        builder.parameters = params.split(re.argsSep);
+        outerMacroStart = line;
+      }
+      continue;
+    }
+
+    // .endmacro
+    if (re.endMacro.hasMatch(line.contents.trimComments())) {
+      bool shouldBuild = false;
+      try {
+        shouldBuild = !tracker.exit();
+      } on NestingEscapeError {
+        erroringLines.add(Pair(line, "unbalanced .endmacro"));
+        continue;
+      }
+      if (shouldBuild) {
+        Macro? macro = builder?.build();
+        if (macro != null) {
+          macros[macro.qualifier] = macro;
+        }
+        builder = null;
+      }
+      continue;
+    }
+
+    // potential contents
+    if (tracker.depth == 1) {
+      builder?.addLine(line);
+    } else if (tracker.depth == 0) {
+      remainingLines.add(line);
+    }
+  }
+  if (tracker.depth > 0 || builder != null) {
+    erroringLines.add(Pair(outerMacroStart!, "unclosed macro"));
+  }
+
+  // apply macros
+  bool didExpand = true;
+  List<Line> out = remainingLines;
+  int escape = 128;
+  while (didExpand) { // multiple passes to let nesting work
+    escape--;
+    didExpand = false;
+    remainingLines = out;
+    out = [];
+
+    for (Line line in remainingLines) {
+      final trimmedLine = line.contents.trimComments();
+      final RegExpMatch? match = re.macroInvocation.firstMatch(trimmedLine);
+      if (match != null) {
+        didExpand = true;
+        if (escape <= 0) {
+          erroringLines.add(Pair(line, "macro expansion recursion limit reached"));
+          out.add(line.set("nop"));
+          didExpand = false;
+          continue;
+        }
+        final String name = match.namedGroup("name")!;
+        final String argStr = match.namedGroup("args")!;
+        final List<String> args = argStr.split(re.argsSep);
+        final String qualifier = "$name|${args.length}|";
+        if (macros.containsKey(qualifier)) {
+          final Macro macro = macros[qualifier]!;
+          out.add(Line(line.num.copyWith(), ".push_locblk"));
+          out.add(Line(line.num.copyWith(), ".dbgbrk"));
+          out.add(Line(line.num.copyWith(), ";!! Macro invocation: $trimmedLine"));
+          for (Line mLine in macro.realizedLines(args)) {
+            out.add(Line(mLine.num.copyWith(includedByLine: line.num.first),
+                mLine.contents));
+          }
+          out.add(Line(line.num.copyWith(), ".pop_locblk"));
+          out.add(Line(line.num.copyWith(), ".dbgbrk"));
+        } else {
+          line = line.set("nop");
+          out.add(line);
+          erroringLines.add(Pair(
+              line, "macro '$name' not found for ${args.length} parameters"));
+        }
+      } else {
+        out.add(line);
+      }
+    }
   }
   return out;
 }
@@ -394,13 +614,23 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
   List<Token> tokens = [];
   List<Token> dataTokens = [Tokens.dbgBreak(), Tokens.dataMode()];
   _LocalPrefixGenerator prefixGen = _LocalPrefixGenerator();
-  String localLabelPrefix = prefixGen.next();
+  Stack<String> localLabelPrefix = Stack([prefixGen.next()]);
   bool dataMode = false;
   for (Line line in lines) {
     List<Token> tentativeTokens = [];
     tentativeTokens.add(Tokens.lineStart(line.num));
     dataTokens.add(Tokens.lineStart(line.num));
     String val = line.contents.trim();
+
+    {
+      RegExpMatch? match = re.listingComment.firstMatch(val.trim());
+      if (match != null) {
+        tentativeTokens.add(Tokens.listingComment(match.namedGroup("msg")!));
+        tokens.addAll(tentativeTokens);
+        continue;
+      }
+    }
+
     if (val.contains(";")) {
       val = val.split(";")[0].trimRight();
     }
@@ -451,7 +681,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
         continue;
       }
       label = match!.group(1)!;
-      tentativeTokens.add(Tokens.makeLabel(label, localLabelPrefix));
+      tentativeTokens.add(Tokens.makeLabel(label, localLabelPrefix.peek()));
       if (val == '') {
         (dataMode ? dataTokens : tokens).addAll(tentativeTokens);
         continue;
@@ -494,7 +724,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
           continue;
         }
         tentativeTokens.add(Tokens.interrupt(vector));
-        tentativeTokens.add(Tokens.makeLabelVal(targetLabel, localLabelPrefix));
+        tentativeTokens.add(Tokens.makeLabelVal(targetLabel, localLabelPrefix.peek()));
         tokens.addAll(tentativeTokens);
         continue;
       }
@@ -502,7 +732,21 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
 
     { // local block
       if (re.localBlock.firstMatch(val) != null) {
-        localLabelPrefix = prefixGen.next();
+        localLabelPrefix.clear();
+        localLabelPrefix.push(prefixGen.next());
+        continue;
+      }
+
+      if (re.localBlockPush.firstMatch(val) != null) {
+        localLabelPrefix.push(prefixGen.next());
+        continue;
+      }
+
+      if (re.localBlockPop.firstMatch(val) != null) {
+        localLabelPrefix.pop();
+        if (localLabelPrefix.isEmpty) {
+          localLabelPrefix.push(prefixGen.next());
+        }
         continue;
       }
     }
@@ -571,7 +815,7 @@ List<Token> parseTokens(List<Line> lines, List<Pair<Line, String>> erroringLines
           continue;
         }
         String label = match.group(1)!;
-        tentativeTokens.add(Tokens.makeLabelVal(label, localLabelPrefix));
+        tentativeTokens.add(Tokens.makeLabelVal(label, localLabelPrefix.peek()));
       } else {
         erroringLines.add(line.error("Invalid argument for jump instruction"));
         continue;
@@ -920,6 +1164,20 @@ class PaddingInstruction extends Instruction {
 
   @override
   int get numWords => words;
+
+  @override
+  String toString() => "pad<$words words> $labels";
+}
+
+class ListingCommentInstruction extends Instruction {
+  final String message;
+  ListingCommentInstruction(this.message): super(LineId(-42, "ignore_me"), ';!!', [], nullInfo);
+
+  @override
+  Iterable<int> compiled(Map<String, int> labelAddresses, int pc) => const [];
+
+  @override
+  int get numWords => 0;
 }
 
 class JumpInstruction extends Instruction {
@@ -1323,6 +1581,8 @@ List<Instruction> parseInstructions(List<Token> tokens, List<Pair<LineId, String
       labels.add(token.value);
     } else if (token.token == Tokens.dbgBreak) {
       instructions.add(PaddingInstruction(line, [], 0));
+    } else if (token.token == Tokens.listingComment) {
+      instructions.add(ListingCommentInstruction(token.value));
     } else if (token.token == Tokens.interrupt) {
       labels = [];
       int vector = token.value;
@@ -1623,9 +1883,9 @@ class ListingEntry {
   final List<String> labels;
   final List<int> words;
 
-  ListingEntry({required this.pc, required this.line, required this.original, required this.labels, required this.words});
+  const ListingEntry({required this.pc, required this.line, required this.original, required this.labels, required this.words});
 
-  String get paddedWords {
+  String get _paddedWords {
     List<String> out = [];
     for (int i = 0; i < 3; i++) {
       if (i < words.length) {
@@ -1638,8 +1898,25 @@ class ListingEntry {
   }
 
   String output() {
-    return "0x${pc.hexString4}\t$paddedWords\t${original.padRight(20)}${labels.isEmpty ? "" : "\t$labels"}";
+    return "0x${pc.hexString4}\t$_paddedWords\t${original.padRight(20)}${labels.isEmpty ? "" : "\t$labels"}";
   }
+}
+
+class CommentEntry extends ListingEntry {
+  const CommentEntry({required super.pc, required super.original}):
+        super(line: const LineId(0, "ignore_me"), labels: const [], words: const []);
+
+  @override
+  List<String> get labels => [];
+
+  @override
+  String output() => "${6.spaces}\t${14.spaces}\t${20.spaces};!!$original";
+
+  @override
+  List<int> get words => [];
+
+  @override
+  String get _paddedWords => throw UnimplementedError();
 }
 
 class ListingGenerator {
@@ -1649,15 +1926,23 @@ class ListingGenerator {
 
   ListingGenerator({required List<Line> lines}) : _lines = lines.lineMap;
 
+  void addComment(String text, int pc) {
+    entries.add(CommentEntry(pc: pc, original: text));
+  }
+
   void addInstruction(Instruction instr, Map<String, int> labelAddresses, int pc) {
-    ListingEntry entry = ListingEntry(
-        pc: pc,
-        line: instr.lineNo,
-        original: _lines[instr.lineNo] ?? "{LINE CONTENTS NOT FOUND}",
-        labels: instr.labels,
-        words: instr.compiled(labelAddresses, pc).toList(growable: false)
-    );
-    entries.add(entry);
+    if (instr is ListingCommentInstruction) {
+      addComment(instr.message, pc);
+    } else {
+      ListingEntry entry = ListingEntry(
+          pc: pc,
+          line: instr.lineNo,
+          original: _lines[instr.lineNo] ?? "{LINE CONTENTS NOT FOUND}",
+          labels: instr.labels,
+          words: instr.compiled(labelAddresses, pc).toList(growable: false)
+      );
+      entries.add(entry);
+    }
   }
 
   void breakAt(int pc) {
@@ -1795,10 +2080,15 @@ Uint8List? parse(String txt, {int codeStart = 0x4400, bool silent = false, void 
   initInstructionInfo();
   List<Line> lines = parseLines(txt, containingDirectory: containingDirectory);
 
-  List<Pair<Line, String>> erroringLines = [];
+  List<Pair<Line, String>> erroringLines = <Pair<Line, String>>[].onAdd((v) {
+    if (_panicOnRecursionLimit.depth > 0 && v.second == "macro expansion recursion limit reached") {
+      throw MacroRecursionError(v.first);
+    }
+  });
 
   lines = parseIncludeErrors(lines, erroringLines);
   lines = parseDefines(lines, erroringLines);
+  lines = parseMacros(lines, erroringLines);
 
   if (listingGen != null) {
     listingGen.set(ListingGenerator(lines: lines));
@@ -1854,4 +2144,15 @@ Future<void> writeCompiledByName(Uint8List compiled, String fileName) async {
 
 Future<void> writeCompiled(Uint8List compiled, File file) async {
   await file.writeAsBytes(compiled, flush: true);
+}
+
+R executeWithPanicOnRecursionLimit<R>(R Function() callback) {
+  _panicOnRecursionLimit.enter();
+  final R ret;
+  try {
+    ret = callback();
+  } finally {
+    _panicOnRecursionLimit.exit();
+  }
+  return ret;
 }

@@ -47,6 +47,13 @@ class Regex {
   // special
   RegExp interrupt = RegExp(r"^\.interrupt (?:(?:0[xX](?<vector_hex>[0-9a-fA-F]{1,4}))|(?<vector_digits>\d+)) (?<target_label>[A-z$_][A-z0-9$_]*)$");
   RegExp localBlock = RegExp(r"^\.locblk$");
+  RegExp localBlockPush = RegExp(r'^\.push_locblk$');
+  RegExp localBlockPop = RegExp(r'^\.pop_locblk$');
   RegExp include = RegExp(r'^.include <(?<path>[^<>;]*)>');
   RegExp dbgBreak = RegExp(r'^\.dbgbrk$'); // visual newline in debug listing
+  RegExp listingComment = RegExp(r'^;!!(?<msg>.*)');
+  RegExp macro = RegExp(r'^\.macro (?<name>[A-z$_][A-z0-9$_]*)\((?<args>(?:[A-z$_][A-z0-9$_]*)(?:,\s*[A-z$_][A-z0-9$_]*)*)\)$');
+  RegExp endMacro = RegExp(r'^\.endmacro$');
+  RegExp macroInvocation = RegExp(r'^(?<name>[A-z$_][A-z0-9$_]*)\((?<args>.*)\)$');
+  RegExp argsSep = RegExp(r',\s*');
 }

@@ -18,6 +18,7 @@
 
 import 'dart:core';
 import 'dart:core' as core;
+import 'dart:typed_data';
 import 'package:binary/binary.dart';
 import 'package:msp430_dart/src/assembler.dart';
 
@@ -86,6 +87,8 @@ extension IntConverter on int {
   Uint16 get u16 => Uint16(this);
 
   core.bool get bool => this > 0;
+
+  String get spaces => " "*this;
 }
 
 extension BoolConverter on bool {
@@ -180,6 +183,18 @@ class ROStack<T> {
   bool get isEmpty => _values.isEmpty;
 
   bool get isNotEmpty => _values.isNotEmpty;
+}
+
+class Stack<T> extends ROStack<T> {
+  Stack(super.values);
+
+  void push(T value) {
+    _values.add(value);
+  }
+
+  void clear() {
+    _values.clear();
+  }
 }
 
 extension Streamify<T> on List<T> {
@@ -283,5 +298,53 @@ class RegexSubstitution {
       out += piece.get(match);
     }
     return out;
+  }
+}
+
+class NestingEscapeError extends Error {
+  @override
+  String toString() {
+    return "Unbalanced exit() call on a NestedTracker";
+  }
+}
+
+class NestedTracker {
+  int _depth = 0;
+  int get depth => _depth;
+  
+  /// returns: whether tracker was already 'inside'
+  bool enter() {
+    _depth += 1;
+    return _depth > 1;
+  }
+  
+  /// returns: whether tracker is 'inside' after exit() call
+  bool exit() {
+    if (_depth > 0) {
+      _depth -= 1;
+    } else {
+      throw NestingEscapeError();
+    }
+    return _depth > 0;
+  }
+}
+
+extension CompareUint8List on Uint8List {
+  bool equals(Uint8List other) {
+    if (length != other.length) return false;
+    for (int i = 0; i < length; i++) {
+      if (this[i] != other[i]) return false;
+    }
+    return true;
+  }
+}
+
+extension CommentTrim on String {
+  String trimComments([Pattern start = ";"]) {
+    var s = trim();
+    if (s.contains(start)) {
+      s = s.split(start)[0].trim();
+    }
+    return s;
   }
 }
