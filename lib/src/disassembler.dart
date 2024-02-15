@@ -301,7 +301,11 @@ class Disassembler {
 
     final src = _getSrc(srcReg, as, bw);
     final opc = _singleOperandOpcodes[opcode];
-    _add(addr, "$lbl$opc${bw ? '.b' : ''} ${src.repr(labels, bw)}");
+    if (opc == "reti") {
+      _add(addr, "${lbl}reti");
+    } else {
+      _add(addr, "$lbl$opc${bw ? '.b' : ''} ${src.repr(labels, bw)}");
+    }
   }
 
   void _processJump(int instr) {
@@ -369,7 +373,9 @@ void testDisassembler() {
 
     0xd222,
 
-    0x3000
+    0x3000,
+
+    0x1300
 
     /*16500, 768,
 
