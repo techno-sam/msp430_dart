@@ -30,7 +30,7 @@ Future<void> Function() _wrapAsAsync(void Function() target) {
 }
 
 Uint8List _parseErrorless(String code, [String? context]) {
-  return parse(code, silent: false, errorConsumer: (errors) {
+  return parse(code, silent: true, errorConsumer: (errors) {
     for (final entry in errors.entries) {
       print("\t${Fore.RED}${entry.key}:\t${entry.value}${Fore.RESET}");
     }
@@ -117,4 +117,26 @@ void main() {
     fail("Expected a recursion error");
   }),
   timeout: const Timeout(Duration(seconds: 1)));
+  test("zero-argument macro expansion", () {
+    final code1 = """
+    push @r7
+    .macro test_macro()
+      pop 0(r6)
+    .endmacro
+    inc r8
+    test_macro()
+    sub r9 r10
+    """;
+    final code2 = """
+    push @r7
+    inc r8
+    
+    pop 0(r6)
+    
+    sub r9 r10
+    """;
+    final asm1 = _parseErrorless(code1, "code1");
+    final asm2 = _parseErrorless(code2, "code2");
+    assert(asm1.equals(asm2));
+  });
 }

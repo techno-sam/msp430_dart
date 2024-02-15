@@ -361,8 +361,8 @@ List<Line> parseMacros(List<Line> lines, List<Pair<Line, String>> erroringLines)
       } else {
         builder = MacroBuilder();
         builder.name = match.namedGroup("name")!;
-        String params = match.namedGroup("args")!;
-        builder.parameters = params.split(re.argsSep);
+        String? params = match.namedGroup("args");
+        builder.parameters = params?.split(re.argsSep) ?? const [];
         outerMacroStart = line;
       }
       continue;
@@ -420,8 +420,8 @@ List<Line> parseMacros(List<Line> lines, List<Pair<Line, String>> erroringLines)
           continue;
         }
         final String name = match.namedGroup("name")!;
-        final String argStr = match.namedGroup("args")!;
-        final List<String> args = argStr.split(re.argsSep);
+        final String? argStr = match.namedGroup("args");
+        final List<String> args = argStr?.split(re.argsSep) ?? [];
         final String qualifier = "$name|${args.length}|";
         if (macros.containsKey(qualifier)) {
           final Macro macro = macros[qualifier]!;
@@ -1178,6 +1178,9 @@ class ListingCommentInstruction extends Instruction {
 
   @override
   int get numWords => 0;
+
+  @override
+  String toString() => "listingComment<'$message'>";
 }
 
 class JumpInstruction extends Instruction {
@@ -1872,6 +1875,7 @@ class BinarySegment {
   int get wordCount => contents.length;
   final List<int> contents; // each entry is WORD
   List<int> get byteContents => contents.expand((int word) => [(word & 0xff00) >> 8, word & 0xff]).toList();
+  int get end => start + (wordCount * 2);
 
   BinarySegment({required this.start, required this.contents});
 }
@@ -2059,6 +2063,26 @@ Uint8List compile(
   if (errors.isNotEmpty && errorConsumer != null) {
     errorConsumer(errors);
     throw "Errors found during compilation";
+  }
+
+  // merge adjacent segments
+  bool merged = true;
+  List<BinarySegment> newSegments = segments;
+  while (merged) {
+    merged = false;
+    segments = newSegments;
+    newSegments = [];
+    int? lastEnd;
+
+    for (BinarySegment segment in segments) {
+      if (lastEnd == segment.start) {
+        newSegments.last.contents.addAll(segment.contents);
+        merged = true;
+      } else {
+        newSegments.add(segment);
+      }
+      lastEnd = segment.end;
+    }
   }
 
   List<int> out = [

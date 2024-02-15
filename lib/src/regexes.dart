@@ -52,8 +52,8 @@ class Regex {
   RegExp include = RegExp(r'^.include <(?<path>[^<>;]*)>');
   RegExp dbgBreak = RegExp(r'^\.dbgbrk$'); // visual newline in debug listing
   RegExp listingComment = RegExp(r'^;!!(?<msg>.*)');
-  RegExp macro = RegExp(r'^\.macro (?<name>[A-z$_][A-z0-9$_]*)\((?<args>(?:[A-z$_][A-z0-9$_]*)(?:,\s*[A-z$_][A-z0-9$_]*)*)\)$');
+  RegExp macro = RegExp(r'^\.macro (?<name>[A-z$_][A-z0-9$_]*)\((?<args>(?:[A-z$_][A-z0-9$_]*)(?:,\s*[A-z$_][A-z0-9$_]*)*)?\)$');
   RegExp endMacro = RegExp(r'^\.endmacro$');
-  RegExp macroInvocation = RegExp(r'^(?<name>[A-z$_][A-z0-9$_]*)\((?<args>.*)\)$');
+  RegExp macroInvocation = RegExp(r'^(?<name>[A-z$_][A-z0-9$_]*)\((?<args>.+)?\)$');
   RegExp argsSep = RegExp(r',\s*');
 }
